@@ -142,14 +142,20 @@ bool GatewayServer::Start() {
 #endif
 
     // Setup Wintun adapter if elevated
-    if (NatForwarder::IsElevated()) {
-        if (tun_adapter_.OpenOrCreate(L"openroute0", L"OpenRoute")) {
-            tun_adapter_.StartSession();
-            nat_forwarder_.SetupNat("OpenRouteNat", config_.tunnel_subnet);
-            nat_forwarder_.EnableForwarding(config_.egress_interface, "openroute0");
+    try {
+        if (NatForwarder::IsElevated()) {
+            if (tun_adapter_.OpenOrCreate(L"openroute0", L"OpenRoute")) {
+                tun_adapter_.StartSession();
+                nat_forwarder_.SetupNat("OpenRouteNat", config_.tunnel_subnet);
+                nat_forwarder_.EnableForwarding(config_.egress_interface, "openroute0");
+            }
+        } else {
+            LOG_WARN << "Running in non-elevated mode. TUN adapter creation and NetNat deferred.";
         }
-    } else {
-        LOG_WARN << "Running in non-elevated mode. TUN adapter creation and NetNat deferred.";
+    } catch (const std::exception& ex) {
+        LOG_WARN << "Network adapter setup deferred: " << ex.what();
+    } catch (...) {
+        LOG_WARN << "Network adapter setup deferred due to unknown error.";
     }
 
     is_running_ = true;

@@ -61,7 +61,7 @@ private:
     void* wintun_module_ = nullptr;
 #endif
 
-    mutable std::mutex mutex_;
+    mutable std::recursive_mutex mutex_;
     bool session_active_ = false;
 };
 

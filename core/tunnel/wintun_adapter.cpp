@@ -13,7 +13,7 @@ WintunAdapter::~WintunAdapter() {
 
 bool WintunAdapter::LoadDriver(const std::wstring& dll_path) {
 #if defined(_WIN32)
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (wintun_module_) return true;
 
     wintun_module_ = LoadLibraryW(dll_path.c_str());
@@ -58,7 +58,7 @@ bool WintunAdapter::LoadDriver(const std::wstring& dll_path) {
 
 bool WintunAdapter::OpenOrCreate(const std::wstring& adapter_name, const std::wstring& tunnel_type) {
 #if defined(_WIN32)
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!wintun_module_) {
         if (!LoadDriver()) {
             return false;
@@ -87,7 +87,7 @@ bool WintunAdapter::OpenOrCreate(const std::wstring& adapter_name, const std::ws
 
 bool WintunAdapter::StartSession(uint32_t ring_capacity) {
 #if defined(_WIN32)
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!adapter_handle_ || !fn_StartSession_) {
         return false;
     }
@@ -109,7 +109,7 @@ bool WintunAdapter::StartSession(uint32_t ring_capacity) {
 
 void WintunAdapter::Close() {
 #if defined(_WIN32)
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (session_handle_ && fn_EndSession_) {
         fn_EndSession_(session_handle_);
         session_handle_ = nullptr;
@@ -183,7 +183,7 @@ HANDLE WintunAdapter::GetReadWaitEvent() const {
 #endif
 
 bool WintunAdapter::IsActive() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return session_active_;
 }
 
