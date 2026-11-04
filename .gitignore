@@ -1,0 +1,55 @@
+# OpenRoute Git Ignore Rules
+# Build outputs
+build/
+bin/
+out/
+dist/
+*.exe
+*.dll
+*.sys
+*.obj
+*.o
+*.a
+*.lib
+*.exp
+*.ilk
+*.pdb
+*.idb
+
+# IDE & Editor artifacts
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.sln.docstates
+*.code-workspace
+CMakeSettings.json
+CMakeUserPresets.json
+
+# Android
+apps/android/.gradle/
+apps/android/build/
+apps/android/app/build/
+*.apk
+*.aab
+local.properties
+.cxx/
+
+# Runtime data & secrets
+*.db
+*.db-journal
+*.db-wal
+*.log
+*.pfx
+*.cer
+*.key
+*.pem
+private_keys/
+secrets/
+
+# Temporary and OS files
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary_blue">#2563EB</color>
+    <color name="deep_blue">#1D4ED8</color>
+    <color name="navy">#172554</color>
+    <color name="light_blue">#EFF6FF</color>
+    <color name="white">#FFFFFF</color>
+    <color name="background_light">#F8FAFC</color>
+    <color name="text_primary">#0F172A</color>
+    <color name="text_secondary">#64748B</color>
+    <color name="border_color">#E2E8F0</color>
+    <color name="status_success">#16A34A</color>
+    <color name="status_warning">#D97706</color>
+    <color name="status_error">#DC2626</color>
+</resources>

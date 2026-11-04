@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">OpenRoute</string>
+    <string name="tagline">Your internet. Shared on your terms.</string>
+    <string name="btn_connect">Connect Gateway</string>
+    <string name="btn_disconnect">Disconnect</string>
+    <string name="btn_scan_qr">Scan QR Invitation</string>
+    <string name="btn_paste_link">Paste Invitation Link</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_connecting">Connecting...</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_waiting_approval">Waiting for Gateway Owner Approval...</string>
+    <string name="status_reconnecting">Reconnecting...</string>
+</resources>
