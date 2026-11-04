@@ -1,6 +1,7 @@
 #include "core/policy/invitation_manager.hpp"
 #include "core/common/logger.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <sstream>
 
@@ -33,7 +34,8 @@ std::optional<InvitationPayload> InvitationManager::CreateInvitation(
         std::chrono::system_clock::now().time_since_epoch()).count();
     int64_t expires_at = now + invite_validity_sec;
 
-    std::string inv_id = "inv_" + std::to_string(now) + "_" + std::to_string(rand() % 10000);
+    static std::atomic<uint64_t> s_inv_seq{0};
+    std::string inv_id = "inv_" + std::to_string(now) + "_" + std::to_string(++s_inv_seq);
 
     try {
         auto stmt = db_.Prepare(R"(

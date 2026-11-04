@@ -97,6 +97,7 @@ int main(int argc, char* argv[]) {
     if (!gateway.Initialize()) {
         LOG_WARN << "Gateway running in userspace simulation mode (administrative NetNat requires elevated terminal).";
     }
+    gateway.Start();
 
     // 3. Initialize & Start HTTP Dashboard Server
     ui::HttpServer http_server(gateway, http_port);
