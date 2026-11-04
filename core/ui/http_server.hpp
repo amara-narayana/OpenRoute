@@ -46,6 +46,16 @@ private:
     std::string HandleToggleGateway();
     std::string HandleUpdateSettings(const std::string& body);
 
+    // Call sessions & Monetization endpoints
+    std::string HandleGetCalls();
+    std::string HandleApproveCall(const std::string& body);
+    std::string HandlePauseCall(const std::string& body);
+    std::string HandleHangUpCall(const std::string& body);
+    std::string HandleGeneratePin(const std::string& body);
+    std::string HandleGetBillingRates();
+    std::string HandleUpdateBillingRates(const std::string& body);
+    std::string HandleGetBillingSummary();
+
     gateway::GatewayServer& gateway_;
     uint16_t port_;
     std::atomic<bool> is_running_{false};

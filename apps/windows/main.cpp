@@ -57,6 +57,7 @@ int main(int argc, char* argv[]) {
     LOG_INFO << "Initializing OpenRoute Gateway Engine...";
 
     bool headless = false;
+    bool native_gui = false;
     bool open_browser = false;
     uint16_t http_port = 8765;
     std::string db_path = "openroute.db";
@@ -72,13 +73,17 @@ int main(int argc, char* argv[]) {
                       << "  -v, --version       Show version\n"
                       << "  -h, --help          Show help\n"
                       << "  --headless, --cli   Run in console-only headless mode (no Windows GUI)\n"
-                      << "  --open-browser      Open web dashboard in browser\n"
+                      << "  --native-gui        Launch classic Win32 GUI window\n"
+                      << "  --open-browser      Open in default web browser tab\n"
                       << "  --db <path>         Specify custom database path\n"
                       << "  --port <port>       HTTP dashboard port (default: 8765)\n" << std::flush;
             return 0;
         }
         if (arg == "--headless" || arg == "--cli" || arg == "--no-gui") {
             headless = true;
+        }
+        if (arg == "--native-gui") {
+            native_gui = true;
         }
         if (arg == "--open-browser") {
             open_browser = true;
@@ -150,11 +155,36 @@ int main(int argc, char* argv[]) {
                   << "     Dashboard URL:        " << dashboard_url << "\n\n" << std::flush;
 
         if (!headless) {
-            LOG_INFO << "Opening OpenRoute Native Windows GUI Desktop App...";
-            gui::MainWindow main_win(gateway, http_server);
-            if (main_win.Create()) {
-                main_win.RunMessageLoop();
-                g_shutdown_requested = true;
+            if (native_gui) {
+                LOG_INFO << "Opening OpenRoute Classic Win32 GUI...";
+                gui::MainWindow main_win(gateway, http_server);
+                if (main_win.Create()) {
+                    main_win.RunMessageLoop();
+                    g_shutdown_requested = true;
+                }
+            } else {
+                LOG_INFO << "Launching OpenRoute Modern Desktop Application Window...";
+                CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+
+                // Launch in standalone App Window mode (no browser toolbar, no address bar, no tabs)
+                std::string app_args = "--app=" + dashboard_url + " --window-size=1280,840";
+                HINSTANCE hRes = ShellExecuteA(NULL, "open", "msedge.exe", app_args.c_str(), NULL, SW_SHOWNORMAL);
+                if (reinterpret_cast<INT_PTR>(hRes) <= 32) {
+                    std::string edge_path = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
+                    hRes = ShellExecuteA(NULL, "open", edge_path.c_str(), app_args.c_str(), NULL, SW_SHOWNORMAL);
+                    if (reinterpret_cast<INT_PTR>(hRes) <= 32) {
+                        // Fallback to native Win32 GUI
+                        gui::MainWindow main_win(gateway, http_server);
+                        if (main_win.Create()) {
+                            main_win.RunMessageLoop();
+                            g_shutdown_requested = true;
+                        }
+                    }
+                }
+
+                while (!g_shutdown_requested) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                }
             }
         } else {
             std::cout << "Running in headless CLI mode. Press Ctrl+C to stop.\n\n" << std::flush;

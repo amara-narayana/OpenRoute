@@ -67,6 +67,7 @@ public:
 
     std::optional<CallSession> GetCall(const std::string& session_id) const;
     std::optional<CallSession> FindActiveCallByPin(const std::string& dial_pin) const;
+    std::optional<CallSession> FindCallByPin(const std::string& dial_pin) const;
     std::optional<CallSession> FindActiveCallByIp(const std::string& client_ip) const;
 
     std::vector<CallSession> GetActiveCalls() const;

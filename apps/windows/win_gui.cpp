@@ -190,6 +190,22 @@ LRESULT MainWindow::HandleMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
             if (pnm->idFrom == IDC_TAB_CONTROL && pnm->code == TCN_SELCHANGE) {
                 int selected = TabCtrl_GetCurSel(hTab_);
                 SwitchTab(selected);
+            } else if (pnm->idFrom == IDC_DEVICE_LIST) {
+                if (pnm->code == NM_CLICK) {
+                    NMITEMACTIVATE* pia = reinterpret_cast<NMITEMACTIVATE*>(lParam);
+                    if (pia && pia->iItem >= 0) {
+                        wchar_t buf[64]{};
+                        ListView_GetItemText(hList_, pia->iItem, 1, buf, 64);
+                        selected_pin_ = ToString(buf);
+                    }
+                } else if (pnm->code == LVN_ITEMCHANGED) {
+                    NMLISTVIEW* pnmv = reinterpret_cast<NMLISTVIEW*>(lParam);
+                    if (pnmv && (pnmv->uNewState & LVIS_SELECTED) && pnmv->iItem >= 0) {
+                        wchar_t buf[64]{};
+                        ListView_GetItemText(hList_, pnmv->iItem, 1, buf, 64);
+                        selected_pin_ = ToString(buf);
+                    }
+                }
             }
             return 0;
         }
@@ -517,12 +533,54 @@ void MainWindow::UpdateHeaderStatus() {
 void MainWindow::RefreshDeviceList() {
     auto& billing = gateway_.billing_manager();
     auto calls = billing.GetAllCalls();
+    int currentCount = ListView_GetItemCount(hList_);
 
+    if (currentCount == static_cast<int>(calls.size())) {
+        // In-place update: never deletes rows, never deselects the user's clicked item!
+        for (int i = 0; i < static_cast<int>(calls.size()); ++i) {
+            const auto& c = calls[i];
+
+            std::wstring wName = ToWString(c.device_name);
+            ListView_SetItemText(hList_, i, 0, const_cast<LPWSTR>(wName.c_str()));
+
+            std::wstring wPin = ToWString(c.dial_pin);
+            ListView_SetItemText(hList_, i, 1, const_cast<LPWSTR>(wPin.c_str()));
+
+            std::wstring wPlat = ToWString(c.platform);
+            ListView_SetItemText(hList_, i, 2, const_cast<LPWSTR>(wPlat.c_str()));
+
+            std::wstring wIp = ToWString(c.client_ip.empty() ? "Pending Connect" : c.client_ip);
+            ListView_SetItemText(hList_, i, 3, const_cast<LPWSTR>(wIp.c_str()));
+
+            std::string used = accounting::BillingManager::FormatBytes(c.bytes_rx + c.bytes_tx);
+            std::wstring wUsed = ToWString(used);
+            ListView_SetItemText(hList_, i, 4, const_cast<LPWSTR>(wUsed.c_str()));
+
+            int64_t now_epoch = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            int64_t dur = (c.end_time > 0 ? c.end_time : now_epoch) - c.start_time;
+            std::string durStr = accounting::BillingManager::FormatDuration(dur);
+            std::wstring wDur = ToWString(durStr);
+            ListView_SetItemText(hList_, i, 5, const_cast<LPWSTR>(wDur.c_str()));
+
+            std::string billStr = accounting::BillingManager::FormatCurrency(c.billed_amount, billing.GetRates().currency);
+            std::wstring wBill = ToWString(billStr);
+            ListView_SetItemText(hList_, i, 6, const_cast<LPWSTR>(wBill.c_str()));
+
+            std::wstring wStatus = L"ACTIVE";
+            if (c.is_hung_up) wStatus = L"HUNG UP";
+            else if (c.is_paused) wStatus = L"PAUSED";
+            else if (!c.is_approved) wStatus = L"PENDING";
+            ListView_SetItemText(hList_, i, 7, const_cast<LPWSTR>(wStatus.c_str()));
+        }
+        return;
+    }
+
+    // Row count changed: full rebuild, then restore selection state
     ListView_DeleteAllItems(hList_);
-
     LVITEMW lvi{};
     lvi.mask = LVIF_TEXT;
 
+    int reselectIdx = -1;
     for (int i = 0; i < static_cast<int>(calls.size()); ++i) {
         const auto& c = calls[i];
         lvi.iItem = i;
@@ -532,44 +590,41 @@ void MainWindow::RefreshDeviceList() {
         lvi.pszText = const_cast<LPWSTR>(wName.c_str());
         ListView_InsertItem(hList_, &lvi);
 
-        // Subitem 1: Dial PIN
         std::wstring wPin = ToWString(c.dial_pin);
         ListView_SetItemText(hList_, i, 1, const_cast<LPWSTR>(wPin.c_str()));
+        if (!selected_pin_.empty() && c.dial_pin == selected_pin_) {
+            reselectIdx = i;
+        }
 
-        // Subitem 2: Platform
         std::wstring wPlat = ToWString(c.platform);
         ListView_SetItemText(hList_, i, 2, const_cast<LPWSTR>(wPlat.c_str()));
 
-        // Subitem 3: Client IP
         std::wstring wIp = ToWString(c.client_ip.empty() ? "Pending Connect" : c.client_ip);
         ListView_SetItemText(hList_, i, 3, const_cast<LPWSTR>(wIp.c_str()));
 
-        // Subitem 4: Data Used
         std::string used = accounting::BillingManager::FormatBytes(c.bytes_rx + c.bytes_tx);
         std::wstring wUsed = ToWString(used);
         ListView_SetItemText(hList_, i, 4, const_cast<LPWSTR>(wUsed.c_str()));
 
-        // Subitem 5: Duration
-        int64_t dur = (c.end_time > 0 ? c.end_time : (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count())) - c.start_time;
+        int64_t now_epoch = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        int64_t dur = (c.end_time > 0 ? c.end_time : now_epoch) - c.start_time;
         std::string durStr = accounting::BillingManager::FormatDuration(dur);
         std::wstring wDur = ToWString(durStr);
         ListView_SetItemText(hList_, i, 5, const_cast<LPWSTR>(wDur.c_str()));
 
-        // Subitem 6: Billed Amount
-        std::string billStr = accounting::BillingManager::FormatCurrency(c.billed_amount);
+        std::string billStr = accounting::BillingManager::FormatCurrency(c.billed_amount, billing.GetRates().currency);
         std::wstring wBill = ToWString(billStr);
         ListView_SetItemText(hList_, i, 6, const_cast<LPWSTR>(wBill.c_str()));
 
-        // Subitem 7: Status
         std::wstring wStatus = L"ACTIVE";
-        if (c.is_hung_up) {
-            wStatus = L"HUNG UP";
-        } else if (c.is_paused) {
-            wStatus = L"PAUSED";
-        } else if (!c.is_approved) {
-            wStatus = L"PENDING";
-        }
+        if (c.is_hung_up) wStatus = L"HUNG UP";
+        else if (c.is_paused) wStatus = L"PAUSED";
+        else if (!c.is_approved) wStatus = L"PENDING";
         ListView_SetItemText(hList_, i, 7, const_cast<LPWSTR>(wStatus.c_str()));
+    }
+
+    if (reselectIdx >= 0) {
+        ListView_SetItemState(hList_, reselectIdx, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
     }
 }
 
@@ -599,57 +654,75 @@ void MainWindow::RefreshBusinessStats() {
 }
 
 void MainWindow::OnApproveClicked() {
-    int sel = ListView_GetNextItem(hList_, -1, LVNI_SELECTED);
-    if (sel < 0) {
-        MessageBoxW(hWnd_, L"Please select a device / call session from the list.", L"OpenRoute", MB_OK | MB_ICONINFORMATION);
+    std::string pin = selected_pin_;
+    if (pin.empty()) {
+        int sel = ListView_GetNextItem(hList_, -1, LVNI_SELECTED);
+        if (sel >= 0) {
+            wchar_t pinBuf[64]{};
+            ListView_GetItemText(hList_, sel, 1, pinBuf, 64);
+            pin = ToString(pinBuf);
+        }
+    }
+
+    if (pin.empty()) {
+        MessageBoxW(hWnd_, L"Please click a device / call row to select it.", L"OpenRoute", MB_OK | MB_ICONINFORMATION);
         return;
     }
 
-    wchar_t pinBuf[64];
-    ListView_GetItemText(hList_, sel, 1, pinBuf, 64);
-    std::string pin = ToString(pinBuf);
-
-    auto call = gateway_.billing_manager().FindActiveCallByPin(pin);
+    auto call = gateway_.billing_manager().FindCallByPin(pin);
     if (call) {
         gateway_.billing_manager().ApproveCall(call->session_id);
         RefreshDeviceList();
+        RefreshBusinessStats();
         MessageBoxW(hWnd_, L"Session approved! Remote device now has active internet.", L"OpenRoute", MB_OK | MB_ICONINFORMATION);
     }
 }
 
 void MainWindow::OnPauseClicked() {
-    int sel = ListView_GetNextItem(hList_, -1, LVNI_SELECTED);
-    if (sel < 0) {
-        MessageBoxW(hWnd_, L"Please select a device / call session from the list.", L"OpenRoute", MB_OK | MB_ICONINFORMATION);
+    std::string pin = selected_pin_;
+    if (pin.empty()) {
+        int sel = ListView_GetNextItem(hList_, -1, LVNI_SELECTED);
+        if (sel >= 0) {
+            wchar_t pinBuf[64]{};
+            ListView_GetItemText(hList_, sel, 1, pinBuf, 64);
+            pin = ToString(pinBuf);
+        }
+    }
+
+    if (pin.empty()) {
+        MessageBoxW(hWnd_, L"Please click a device / call row to select it.", L"OpenRoute", MB_OK | MB_ICONINFORMATION);
         return;
     }
 
-    wchar_t pinBuf[64];
-    ListView_GetItemText(hList_, sel, 1, pinBuf, 64);
-    std::string pin = ToString(pinBuf);
-
-    auto call = gateway_.billing_manager().FindActiveCallByPin(pin);
+    auto call = gateway_.billing_manager().FindCallByPin(pin);
     if (call) {
         bool newPause = !call->is_paused;
         gateway_.billing_manager().PauseCall(call->session_id, newPause);
         RefreshDeviceList();
+        RefreshBusinessStats();
     }
 }
 
 void MainWindow::OnHangUpClicked() {
-    int sel = ListView_GetNextItem(hList_, -1, LVNI_SELECTED);
-    if (sel < 0) {
-        MessageBoxW(hWnd_, L"Please select a device / call session from the list.", L"OpenRoute", MB_OK | MB_ICONINFORMATION);
+    std::string pin = selected_pin_;
+    if (pin.empty()) {
+        int sel = ListView_GetNextItem(hList_, -1, LVNI_SELECTED);
+        if (sel >= 0) {
+            wchar_t pinBuf[64]{};
+            ListView_GetItemText(hList_, sel, 1, pinBuf, 64);
+            pin = ToString(pinBuf);
+        }
+    }
+
+    if (pin.empty()) {
+        MessageBoxW(hWnd_, L"Please click a device / call row to select it.", L"OpenRoute", MB_OK | MB_ICONINFORMATION);
         return;
     }
 
-    wchar_t pinBuf[64];
-    ListView_GetItemText(hList_, sel, 1, pinBuf, 64);
-    std::string pin = ToString(pinBuf);
-
-    auto call = gateway_.billing_manager().FindActiveCallByPin(pin);
+    auto call = gateway_.billing_manager().FindCallByPin(pin);
     if (call) {
         gateway_.billing_manager().HangUpCall(call->session_id);
+        selected_pin_.clear();
         RefreshDeviceList();
         RefreshBusinessStats();
         MessageBoxW(hWnd_, L"Call hung up! Internet connection terminated and usage finalized.", L"OpenRoute", MB_OK | MB_ICONINFORMATION);

@@ -360,6 +360,22 @@ std::string HttpServer::HandleRequest(const std::string& method, const std::stri
         json_response = HandleToggleGateway();
     } else if (method == "POST" && path == "/api/settings/network") {
         json_response = HandleUpdateSettings(body);
+    } else if (method == "GET" && path == "/api/calls") {
+        json_response = HandleGetCalls();
+    } else if (method == "POST" && path == "/api/calls/approve") {
+        json_response = HandleApproveCall(body);
+    } else if (method == "POST" && path == "/api/calls/pause") {
+        json_response = HandlePauseCall(body);
+    } else if (method == "POST" && path == "/api/calls/hangup") {
+        json_response = HandleHangUpCall(body);
+    } else if (method == "POST" && path == "/api/calls/generate-pin") {
+        json_response = HandleGeneratePin(body);
+    } else if (method == "GET" && path == "/api/billing/rates") {
+        json_response = HandleGetBillingRates();
+    } else if (method == "POST" && path == "/api/billing/rates") {
+        json_response = HandleUpdateBillingRates(body);
+    } else if (method == "GET" && path == "/api/billing/summary") {
+        json_response = HandleGetBillingSummary();
     } else {
         std::string not_found = "{\"error\": \"Not Found\"}";
         std::ostringstream ss;
@@ -700,6 +716,159 @@ std::string HttpServer::HandleToggleGateway() {
 
     json resp;
     resp["is_running"] = gateway_.IsRunning();
+    return resp.dump();
+}
+
+std::string HttpServer::HandleGetCalls() {
+    auto calls = gateway_.billing_manager().GetAllCalls();
+    json arr = json::array();
+    int64_t now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    for (const auto& c : calls) {
+        json item;
+        item["session_id"] = c.session_id;
+        item["dial_pin"] = c.dial_pin;
+        item["device_name"] = c.device_name;
+        item["platform"] = c.platform;
+        item["client_ip"] = c.client_ip.empty() ? "Pending Connect" : c.client_ip;
+        item["bytes_rx"] = c.bytes_rx;
+        item["bytes_tx"] = c.bytes_tx;
+        item["bytes_used"] = c.bytes_rx + c.bytes_tx;
+        item["data_used"] = accounting::BillingManager::FormatBytes(c.bytes_rx + c.bytes_tx);
+
+        int64_t dur = (c.end_time > 0 ? c.end_time : now) - c.start_time;
+        item["duration_sec"] = dur;
+        item["duration"] = accounting::BillingManager::FormatDuration(dur);
+        item["billed_amount"] = c.billed_amount;
+        item["billed"] = accounting::BillingManager::FormatCurrency(c.billed_amount, gateway_.billing_manager().GetRates().currency);
+
+        std::string status = "ACTIVE";
+        if (c.is_hung_up) status = "HUNG UP";
+        else if (c.is_paused) status = "PAUSED";
+        else if (!c.is_approved) status = "PENDING";
+
+        item["status"] = status;
+        item["is_approved"] = c.is_approved;
+        item["is_paused"] = c.is_paused;
+        item["is_hung_up"] = c.is_hung_up;
+        arr.push_back(item);
+    }
+    return arr.dump();
+}
+
+std::string HttpServer::HandleApproveCall(const std::string& body) {
+    try {
+        json req = json::parse(body);
+        std::string pin = req.value("pin", "");
+        std::string sess_id = req.value("session_id", "");
+        if (sess_id.empty() && !pin.empty()) {
+            auto call = gateway_.billing_manager().FindCallByPin(pin);
+            if (call) sess_id = call->session_id;
+        }
+        if (!sess_id.empty()) {
+            gateway_.billing_manager().ApproveCall(sess_id);
+            return "{\"success\":true}";
+        }
+    } catch (...) {}
+    return "{\"success\":false,\"error\":\"Invalid request\"}";
+}
+
+std::string HttpServer::HandlePauseCall(const std::string& body) {
+    try {
+        json req = json::parse(body);
+        std::string pin = req.value("pin", "");
+        std::string sess_id = req.value("session_id", "");
+        if (sess_id.empty() && !pin.empty()) {
+            auto call = gateway_.billing_manager().FindCallByPin(pin);
+            if (call) sess_id = call->session_id;
+        }
+        if (!sess_id.empty()) {
+            auto call = gateway_.billing_manager().GetCall(sess_id);
+            bool new_paused = call ? !call->is_paused : true;
+            gateway_.billing_manager().PauseCall(sess_id, new_paused);
+            json resp;
+            resp["success"] = true;
+            resp["paused"] = new_paused;
+            return resp.dump();
+        }
+    } catch (...) {}
+    return "{\"success\":false,\"error\":\"Invalid request\"}";
+}
+
+std::string HttpServer::HandleHangUpCall(const std::string& body) {
+    try {
+        json req = json::parse(body);
+        std::string pin = req.value("pin", "");
+        std::string sess_id = req.value("session_id", "");
+        if (sess_id.empty() && !pin.empty()) {
+            auto call = gateway_.billing_manager().FindCallByPin(pin);
+            if (call) sess_id = call->session_id;
+        }
+        if (!sess_id.empty()) {
+            gateway_.billing_manager().HangUpCall(sess_id);
+            return "{\"success\":true}";
+        }
+    } catch (...) {}
+    return "{\"success\":false,\"error\":\"Invalid request\"}";
+}
+
+std::string HttpServer::HandleGeneratePin(const std::string& body) {
+    try {
+        json req = json::parse(body);
+        int64_t dur_sec = req.value("duration_sec", 86400);
+        uint64_t quota_bytes = req.value("quota_bytes", 5ULL * 1024 * 1024 * 1024);
+        std::string platform = req.value("platform", "Universal");
+
+        std::string pin = gateway_.proxy() ? gateway_.proxy()->GenerateDialPin(6) : "197141";
+        if (gateway_.proxy()) {
+            gateway_.proxy()->CreateDialPass(pin, quota_bytes, dur_sec, platform);
+        }
+
+        json resp;
+        resp["success"] = true;
+        resp["pin"] = pin;
+        resp["formatted_pin"] = pin.substr(0, 3) + "-" + pin.substr(3);
+        return resp.dump();
+    } catch (...) {}
+    return "{\"success\":false,\"error\":\"Failed to generate PIN\"}";
+}
+
+std::string HttpServer::HandleGetBillingRates() {
+    auto rates = gateway_.billing_manager().GetRates();
+    json resp;
+    resp["currency"] = rates.currency;
+    resp["rate_per_gb"] = rates.rate_per_gb;
+    resp["rate_per_hour"] = rates.rate_per_hour;
+    return resp.dump();
+}
+
+std::string HttpServer::HandleUpdateBillingRates(const std::string& body) {
+    try {
+        json req = json::parse(body);
+        accounting::PricingRates r;
+        r.currency = req.value("currency", "INR");
+        r.rate_per_gb = req.value("rate_per_gb", 50.0);
+        r.rate_per_hour = req.value("rate_per_hour", 20.0);
+        gateway_.billing_manager().UpdateRates(r);
+        return "{\"success\":true}";
+    } catch (...) {}
+    return "{\"success\":false,\"error\":\"Failed to update rates\"}";
+}
+
+std::string HttpServer::HandleGetBillingSummary() {
+    auto summary = gateway_.billing_manager().GetSummary();
+    json resp;
+    resp["total_revenue"] = summary.total_revenue;
+    resp["formatted_revenue"] = accounting::BillingManager::FormatCurrency(summary.total_revenue, summary.currency);
+    resp["total_bytes"] = summary.total_bytes;
+    resp["formatted_bytes"] = accounting::BillingManager::FormatBytes(summary.total_bytes);
+    resp["total_sessions"] = summary.total_sessions;
+    resp["active_sessions"] = summary.active_sessions;
+    resp["currency"] = summary.currency;
+    resp["public_ip"] = public_ip_.empty() ? "103.217.214.146" : public_ip_;
+    resp["public_port"] = 8080;
+    resp["local_ip"] = GetLocalLanIp();
     return resp.dump();
 }
 

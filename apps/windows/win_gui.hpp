@@ -91,6 +91,7 @@ private:
 
     int current_tab_ = 0;
     std::string latest_generated_pin_;
+    std::string selected_pin_;
     std::string public_ip_cached_;
 };
 

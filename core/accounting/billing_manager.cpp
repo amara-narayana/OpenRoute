@@ -196,6 +196,7 @@ bool BillingManager::ApproveCall(const std::string& session_id) {
         if (s.session_id == session_id) {
             s.is_approved = true;
             s.is_paused = false;
+            s.is_hung_up = false;
             PersistSession(s);
             return true;
         }
@@ -215,6 +216,17 @@ std::optional<CallSession> BillingManager::FindActiveCallByPin(const std::string
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& s : sessions_) {
         if (!s.is_hung_up && s.dial_pin == dial_pin) return s;
+    }
+    return std::nullopt;
+}
+
+std::optional<CallSession> BillingManager::FindCallByPin(const std::string& dial_pin) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& s : sessions_) {
+        if (!s.is_hung_up && s.dial_pin == dial_pin) return s;
+    }
+    for (auto it = sessions_.rbegin(); it != sessions_.rend(); ++it) {
+        if (it->dial_pin == dial_pin) return *it;
     }
     return std::nullopt;
 }
