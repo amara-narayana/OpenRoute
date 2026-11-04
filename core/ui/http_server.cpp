@@ -279,6 +279,9 @@ std::string HttpServer::HandleRequest(const std::string& method, const std::stri
         std::ostringstream ss;
         ss << "HTTP/1.1 200 OK\r\n"
            << "Content-Type: text/html; charset=utf-8\r\n"
+           << "Cache-Control: no-cache, no-store, must-revalidate\r\n"
+           << "Pragma: no-cache\r\n"
+           << "Expires: 0\r\n"
            << "Access-Control-Allow-Origin: *\r\n"
            << "Content-Length: " << html.size() << "\r\n"
            << "Connection: close\r\n\r\n";
@@ -303,6 +306,9 @@ std::string HttpServer::HandleRequest(const std::string& method, const std::stri
                 ss << "HTTP/1.1 200 OK\r\n"
                    << "Content-Type: application/vnd.android.package-archive\r\n"
                    << "Content-Disposition: attachment; filename=\"openroute.apk\"\r\n"
+                   << "Cache-Control: no-cache, no-store, must-revalidate\r\n"
+                   << "Pragma: no-cache\r\n"
+                   << "Expires: 0\r\n"
                    << "Access-Control-Allow-Origin: *\r\n"
                    << "Content-Length: " << size << "\r\n"
                    << "Connection: close\r\n\r\n";
