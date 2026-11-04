@@ -20,11 +20,11 @@ TEST(DatabaseTest, MigrationsAndVersion) {
 
     EXPECT_EQ(db.GetSchemaVersion(), 0);
     EXPECT_TRUE(db.ApplyMigrations());
-    EXPECT_EQ(db.GetSchemaVersion(), 1);
+    EXPECT_EQ(db.GetSchemaVersion(), 2);
 
     // Re-applying migrations is idempotent
     EXPECT_TRUE(db.ApplyMigrations());
-    EXPECT_EQ(db.GetSchemaVersion(), 1);
+    EXPECT_EQ(db.GetSchemaVersion(), 2);
 }
 
 TEST(DatabaseTest, GatewayCrudOperations) {
@@ -141,4 +141,50 @@ TEST(DatabaseTest, TransactionRollback) {
     auto check_stmt = db.Prepare("SELECT COUNT(*) FROM devices WHERE id = 'dev_fail';");
     EXPECT_TRUE(check_stmt.Step());
     EXPECT_EQ(check_stmt.GetInt(0), 0);
+}
+
+#include "core/accounting/billing_manager.hpp"
+
+TEST(DatabaseTest, BillingManagerOperations) {
+    using namespace openroute::accounting;
+    Database db;
+    EXPECT_TRUE(db.Open(":memory:"));
+    EXPECT_TRUE(db.ApplyMigrations());
+
+    BillingManager billing(db);
+    EXPECT_TRUE(billing.Load());
+
+    // Test default rates
+    PricingRates r = billing.GetRates();
+    EXPECT_EQ(r.currency, "INR");
+    EXPECT_EQ(r.rate_per_gb, 50.0);
+
+    // Update rates
+    r.currency = "USD";
+    r.rate_per_gb = 2.50;
+    r.rate_per_hour = 1.00;
+    EXPECT_TRUE(billing.UpdateRates(r));
+    EXPECT_EQ(billing.GetRates().rate_per_gb, 2.50);
+
+    // Start a call session with dial PIN "849201"
+    std::string sess = billing.StartOrResumeCall("849201", "192.168.1.50", "iPhone", "Alice-Phone");
+    EXPECT_FALSE(sess.empty());
+
+    // Record 1 GB of traffic
+    uint64_t one_gb = 1024ULL * 1024ULL * 1024ULL;
+    EXPECT_TRUE(billing.RecordTraffic(sess, one_gb / 2, one_gb / 2));
+
+    auto call = billing.GetCall(sess);
+    EXPECT_TRUE(call.has_value());
+    EXPECT_EQ(call->bytes_rx + call->bytes_tx, one_gb);
+    EXPECT_GT(call->billed_amount, 2.0); // ~2.50 USD
+
+    // Hang up
+    EXPECT_TRUE(billing.HangUpCall(sess));
+    auto call_after = billing.GetCall(sess);
+    EXPECT_TRUE(call_after->is_hung_up);
+
+    auto summary = billing.GetSummary();
+    EXPECT_EQ(summary.currency, "USD");
+    EXPECT_GT(summary.total_revenue, 2.0);
 }

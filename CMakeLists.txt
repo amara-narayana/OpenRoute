@@ -112,12 +112,18 @@ if(WIN32)
         iphlpapi
         crypt32
         bcrypt
+        comctl32
+        gdi32
+        user32
+        shell32
+        ole32
     )
 endif()
 
 # ----------------- Main Gateway Executable -----------------
 add_executable(openroute_gateway
     apps/windows/main.cpp
+    apps/windows/win_gui.cpp
 )
 
 target_link_libraries(openroute_gateway PRIVATE

@@ -16,9 +16,11 @@
 #include "core/gateway/lan_isolation.hpp"
 #include "core/bandwidth/token_bucket.hpp"
 #include "core/accounting/quota_manager.hpp"
+#include "core/accounting/billing_manager.hpp"
 #include "core/device/device_manager.hpp"
 #include "core/policy/invitation_manager.hpp"
 #include "core/diagnostics/diagnostics_engine.hpp"
+#include "core/gateway/universal_proxy.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -55,7 +57,10 @@ public:
     device::DeviceManager& device_manager() { return device_mgr_; }
     policy::InvitationManager& invitation_manager() { return invitation_mgr_; }
     accounting::QuotaManager& quota_manager() { return quota_mgr_; }
+    accounting::BillingManager& billing_manager() { return billing_mgr_; }
     diagnostics::DiagnosticsEngine& diagnostics_engine() { return diag_engine_; }
+    UniversalProxy* proxy() { return proxy_.get(); }
+    storage::Database& database() { return db_; }
 
     // Direct programmatic packet injection for integration testing and loopback verification
     bool ProcessInboundUdp(const uint8_t* data, size_t len,
@@ -79,10 +84,12 @@ private:
     device::DeviceManager device_mgr_;
     policy::InvitationManager invitation_mgr_;
     accounting::QuotaManager quota_mgr_;
+    accounting::BillingManager billing_mgr_;
     diagnostics::DiagnosticsEngine diag_engine_;
     LanIsolationFilter lan_filter_;
     NatForwarder nat_forwarder_;
     tunnel::WintunAdapter tun_adapter_;
+    std::unique_ptr<UniversalProxy> proxy_;
 
     std::atomic<bool> is_running_{false};
     std::thread udp_thread_;

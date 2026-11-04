@@ -23,7 +23,8 @@ GatewayServer::GatewayServer(storage::Database& db, GatewayConfig config)
       db_(db),
       device_mgr_(db),
       invitation_mgr_(db),
-      quota_mgr_(&db) {}
+      quota_mgr_(&db),
+      billing_mgr_(db) {}
 
 GatewayServer::~GatewayServer() {
     Stop();
@@ -160,6 +161,10 @@ bool GatewayServer::Start() {
 
     is_running_ = true;
 
+    billing_mgr_.Load();
+    proxy_ = std::make_unique<UniversalProxy>(billing_mgr_, quota_mgr_, invitation_mgr_);
+    proxy_->Start();
+
     udp_thread_ = std::thread(&GatewayServer::UdpReceiveLoop, this);
     tun_thread_ = std::thread(&GatewayServer::TunReceiveLoop, this);
     housekeeping_thread_ = std::thread(&GatewayServer::HousekeepingLoop, this);
@@ -173,6 +178,10 @@ void GatewayServer::Stop() {
 
     LOG_INFO << "Stopping OpenRoute Gateway Server...";
     is_running_ = false;
+
+    if (proxy_) {
+        proxy_->Stop();
+    }
 
 #if defined(_WIN32)
     if (udp_socket_ != INVALID_SOCKET) {

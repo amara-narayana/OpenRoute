@@ -291,6 +291,12 @@ std::string HttpServer::HandleRequest(const std::string& method, const std::stri
         return ss.str();
     }
 
+    if ((method == "GET" || method == "HEAD") && (path == "/dial" || path.rfind("/dial?", 0) == 0)) {
+        // Redirect to universal proxy port 8080 /dial
+        std::string target_url = "http://" + (public_ip_.empty() ? "127.0.0.1" : public_ip_) + ":8080" + path;
+        return "HTTP/1.1 302 Found\r\nLocation: " + target_url + "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    }
+
     if ((method == "GET" || method == "HEAD") && (path == "/download/openroute.apk" || path == "/download/app")) {
         std::vector<std::string> search_paths = {
             "apps/android/openroute.apk",

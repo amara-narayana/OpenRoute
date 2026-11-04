@@ -324,6 +324,49 @@ bool Database::ApplyMigrations() {
         LOG_INFO << "Applied schema migration v1 successfully";
     }
 
+    if (current_version < 2) {
+        auto tx = BeginTransaction();
+        bool ok = Execute(R"(
+            CREATE TABLE IF NOT EXISTS billing_settings (
+                id TEXT PRIMARY KEY,
+                currency TEXT NOT NULL DEFAULT 'INR',
+                rate_per_gb REAL NOT NULL DEFAULT 50.0,
+                rate_per_hour REAL NOT NULL DEFAULT 20.0,
+                updated_at INTEGER NOT NULL
+            );
+
+            INSERT OR IGNORE INTO billing_settings (id, currency, rate_per_gb, rate_per_hour, updated_at)
+            VALUES ('default', 'INR', 50.0, 20.0, unixepoch());
+
+            CREATE TABLE IF NOT EXISTS call_sessions (
+                session_id TEXT PRIMARY KEY,
+                dial_pin TEXT NOT NULL,
+                device_name TEXT NOT NULL,
+                client_ip TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                start_time INTEGER NOT NULL,
+                end_time INTEGER,
+                bytes_rx INTEGER NOT NULL DEFAULT 0,
+                bytes_tx INTEGER NOT NULL DEFAULT 0,
+                duration_seconds INTEGER NOT NULL DEFAULT 0,
+                billed_amount REAL NOT NULL DEFAULT 0.0,
+                status TEXT NOT NULL DEFAULT 'ACTIVE'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_call_sessions_pin ON call_sessions(dial_pin);
+            CREATE INDEX IF NOT EXISTS idx_call_sessions_time ON call_sessions(start_time);
+
+            INSERT INTO schema_migrations (version, applied_at) VALUES (2, unixepoch());
+        )");
+
+        if (!ok) {
+            LOG_ERROR << "Failed to apply migration v2";
+            return false;
+        }
+        tx.Commit();
+        LOG_INFO << "Applied schema migration v2 successfully";
+    }
+
     return true;
 }
 

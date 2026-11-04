@@ -3,6 +3,7 @@
 #include "core/storage/database.hpp"
 #include "core/gateway/gateway_server.hpp"
 #include "core/ui/http_server.hpp"
+#include "apps/windows/win_gui.hpp"
 
 #include <csignal>
 #include <iostream>
@@ -55,7 +56,8 @@ int main(int argc, char* argv[]) {
     common::Logger::Instance().SetMinLevel(common::LogLevel::Info);
     LOG_INFO << "Initializing OpenRoute Gateway Engine...";
 
-    bool no_browser = false;
+    bool headless = false;
+    bool open_browser = false;
     uint16_t http_port = 8765;
     std::string db_path = "openroute.db";
 
@@ -69,13 +71,17 @@ int main(int argc, char* argv[]) {
             std::cout << "Usage: openroute_gateway [options]\n"
                       << "  -v, --version       Show version\n"
                       << "  -h, --help          Show help\n"
+                      << "  --headless, --cli   Run in console-only headless mode (no Windows GUI)\n"
+                      << "  --open-browser      Open web dashboard in browser\n"
                       << "  --db <path>         Specify custom database path\n"
-                      << "  --port <port>       HTTP dashboard port (default: 8765)\n"
-                      << "  --no-browser        Do not automatically open dashboard in browser\n" << std::flush;
+                      << "  --port <port>       HTTP dashboard port (default: 8765)\n" << std::flush;
             return 0;
         }
-        if (arg == "--no-browser") {
-            no_browser = true;
+        if (arg == "--headless" || arg == "--cli" || arg == "--no-gui") {
+            headless = true;
+        }
+        if (arg == "--open-browser") {
+            open_browser = true;
         }
         if (arg == "--port" && i + 1 < argc) {
             http_port = static_cast<uint16_t>(std::stoi(argv[++i]));
@@ -132,21 +138,39 @@ int main(int argc, char* argv[]) {
         LOG_INFO << "OpenRoute Dashboard ready at: " << dashboard_url;
 
 #if defined(_WIN32)
-        if (!no_browser) {
+        if (open_browser) {
             LOG_INFO << "Launching control dashboard in default browser...";
             CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
             ShellExecuteA(NULL, "open", dashboard_url.c_str(), NULL, NULL, SW_SHOWNORMAL);
         }
-#endif
 
+        std::cout << "\n[OK] OpenRoute Gateway is running.\n"
+                  << "     Universal Proxy Port: 8080 (HTTP CONNECT / SOCKS5)\n"
+                  << "     WireGuard UDP Port:   51820\n"
+                  << "     Dashboard URL:        " << dashboard_url << "\n\n" << std::flush;
+
+        if (!headless) {
+            LOG_INFO << "Opening OpenRoute Native Windows GUI Desktop App...";
+            gui::MainWindow main_win(gateway, http_server);
+            if (main_win.Create()) {
+                main_win.RunMessageLoop();
+                g_shutdown_requested = true;
+            }
+        } else {
+            std::cout << "Running in headless CLI mode. Press Ctrl+C to stop.\n\n" << std::flush;
+            while (!g_shutdown_requested) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            }
+        }
+#else
         std::cout << "\n[OK] OpenRoute Gateway is running.\n"
                   << "     Dashboard URL: " << dashboard_url << "\n"
                   << "     Press Ctrl+C to stop.\n\n" << std::flush;
 
-        // Keep running until shutdown signal
         while (!g_shutdown_requested) {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
         }
+#endif
 
         LOG_INFO << "Stopping HTTP Dashboard Server...";
         http_server.Stop();
