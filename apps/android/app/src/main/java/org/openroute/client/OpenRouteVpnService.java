@@ -62,7 +62,8 @@ public class OpenRouteVpnService extends VpnService implements Runnable {
             Builder builder = new Builder();
             builder.addAddress("10.77.0.2", 24);
             builder.addRoute("0.0.0.0", 0);
-            builder.addDnsServer("10.77.0.1");
+            builder.addDnsServer("1.1.1.1");
+            builder.addDnsServer("8.8.8.8");
             builder.setMtu(1420);
             builder.setSession("OpenRoute: " + (activeProfile != null ? activeProfile.name : "Gateway"));
 
@@ -71,6 +72,34 @@ public class OpenRouteVpnService extends VpnService implements Runnable {
                 Log.e(TAG, "Failed to establish VPN interface");
                 stopSelf();
                 return;
+            }
+
+            // Register device with gateway asynchronously
+            if (activeProfile != null) {
+                final String host = activeProfile.endpointHost;
+                final String tok = activeProfile.token;
+                new Thread(() -> {
+                    try {
+                        java.net.URL regUrl = new java.net.URL("http://" + host + ":8765/api/devices/register");
+                        java.net.HttpURLConnection conn = (java.net.HttpURLConnection) regUrl.openConnection();
+                        protect(conn.getURL().getHost().hashCode());
+                        conn.setRequestMethod("POST");
+                        conn.setRequestProperty("Content-Type", "application/json");
+                        conn.setConnectTimeout(5000);
+                        conn.setReadTimeout(5000);
+                        conn.setDoOutput(true);
+                        String body = "{\"token\":\"" + (tok != null ? tok : "") +
+                                      "\",\"device_name\":\"Android Phone (" + android.os.Build.MODEL + ")" +
+                                      "\",\"platform\":\"android\",\"assigned_ip\":\"10.77.0.2\"}";
+                        try (java.io.OutputStream os = conn.getOutputStream()) {
+                            os.write(body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        }
+                        int code = conn.getResponseCode();
+                        Log.i(TAG, "Gateway registration returned HTTP " + code);
+                    } catch (Exception e) {
+                        Log.w(TAG, "Gateway registration notice: " + e.getMessage());
+                    }
+                }, "OpenRouteDeviceRegistration").start();
             }
 
             isRunning = true;
@@ -109,27 +138,54 @@ public class OpenRouteVpnService extends VpnService implements Runnable {
 
     @Override
     public void run() {
+        DatagramSocket udp = null;
+        Thread receiverThread = null;
         try {
-            FileInputStream in = new FileInputStream(vpnInterface.getFileDescriptor());
-            FileOutputStream out = new FileOutputStream(vpnInterface.getFileDescriptor());
-            byte[] packet = new byte[32768];
+            final FileInputStream in = new FileInputStream(vpnInterface.getFileDescriptor());
+            final FileOutputStream out = new FileOutputStream(vpnInterface.getFileDescriptor());
 
-            DatagramSocket udp = new DatagramSocket();
+            udp = new DatagramSocket();
             protect(udp);
 
-            InetAddress targetIp = InetAddress.getByName(activeProfile != null ? activeProfile.endpointHost : "192.168.0.239");
-            int targetPort = activeProfile != null ? activeProfile.endpointPort : 51820;
+            final DatagramSocket finalUdp = udp;
+            final InetAddress targetIp = InetAddress.getByName(activeProfile != null ? activeProfile.endpointHost : "192.168.0.239");
+            final int targetPort = activeProfile != null ? activeProfile.endpointPort : 51820;
 
+            // Inbound downlink receiver: reads response packets from gateway via UDP and writes to Android TUN
+            receiverThread = new Thread(() -> {
+                byte[] recvBuf = new byte[32768];
+                while (isRunning && !Thread.currentThread().isInterrupted()) {
+                    try {
+                        DatagramPacket recvPkt = new DatagramPacket(recvBuf, recvBuf.length);
+                        finalUdp.receive(recvPkt);
+                        if (recvPkt.getLength() > 0) {
+                            out.write(recvPkt.getData(), recvPkt.getOffset(), recvPkt.getLength());
+                        }
+                    } catch (Exception e) {
+                        if (isRunning) break;
+                    }
+                }
+            }, "OpenRouteVpnReceiver");
+            receiverThread.start();
+
+            // Outbound uplink sender: reads outgoing IP packets from Android TUN and sends via UDP to gateway
+            byte[] sendBuf = new byte[32768];
             while (isRunning && !Thread.currentThread().isInterrupted()) {
-                int length = in.read(packet);
+                int length = in.read(sendBuf);
                 if (length > 0) {
-                    DatagramPacket udpPkt = new DatagramPacket(packet, length, targetIp, targetPort);
-                    udp.send(udpPkt);
+                    DatagramPacket udpPkt = new DatagramPacket(sendBuf, length, targetIp, targetPort);
+                    finalUdp.send(udpPkt);
                 }
             }
-            udp.close();
         } catch (Exception e) {
-            if (isRunning) Log.w(TAG, "Tunnel loop interrupted: " + e.getMessage());
+            if (isRunning) Log.w(TAG, "Tunnel worker stopped: " + e.getMessage());
+        } finally {
+            if (receiverThread != null) {
+                receiverThread.interrupt();
+            }
+            if (udp != null && !udp.isClosed()) {
+                udp.close();
+            }
         }
     }
 

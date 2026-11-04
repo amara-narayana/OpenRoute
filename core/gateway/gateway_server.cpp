@@ -333,6 +333,46 @@ bool GatewayServer::ProcessInboundUdp(const uint8_t* data, size_t len,
         return true;
     }
 
+    // 3. Mobile IP-in-UDP Packet (Direct Guest Pass Tunnel)
+    if (len >= 20 && (data[0] >> 4) == 4) {
+        uint32_t src_ip = (static_cast<uint32_t>(data[12]) << 24) |
+                          (static_cast<uint32_t>(data[13]) << 16) |
+                          (static_cast<uint32_t>(data[14]) << 8) |
+                          static_cast<uint32_t>(data[15]);
+        std::string src_ip_str = LanIsolationFilter::IpToString(src_ip);
+
+        // Track and enroll mobile session endpoint
+        std::shared_ptr<tunnel::PeerSession> session;
+        {
+            std::lock_guard<std::mutex> lock(peer_mutex_);
+            auto it = sessions_by_ip_.find(src_ip_str);
+            if (it != sessions_by_ip_.end()) {
+                session = it->second;
+                session->SetRemoteEndpoint(remote_endpoint);
+            } else {
+                session = std::make_shared<tunnel::PeerSession>("peer_" + src_ip_str, security::KeyBuffer{}, src_ip_str);
+                session->SetRemoteEndpoint(remote_endpoint);
+                sessions_by_ip_[src_ip_str] = session;
+            }
+        }
+
+        // Apply LAN Isolation Filter
+        auto verdict = lan_filter_.InspectOutbound(data, len);
+        if (verdict != FilterVerdict::Allow) {
+            LOG_WARN << "LAN Isolation Filter dropped packet from " << src_ip_str
+                     << " Verdict: " << VerdictToString(verdict);
+            return false;
+        }
+
+        if (session) {
+            quota_mgr_.RecordTraffic(session->peer_id(), 0, len);
+            diag_engine_.UpdateThroughput(session->peer_id(), 0, len, 0.0);
+        }
+
+        out_tun_packet.assign(data, data + len);
+        return true;
+    }
+
     return false;
 }
 
@@ -356,7 +396,7 @@ bool GatewayServer::ProcessInboundTun(const uint8_t* data, size_t len,
         }
     }
 
-    if (!session || session->state() != tunnel::SessionState::Established) {
+    if (!session || session->remote_endpoint().empty()) {
         return false;
     }
 
@@ -372,9 +412,13 @@ bool GatewayServer::ProcessInboundTun(const uint8_t* data, size_t len,
         }
     }
 
-    // Encrypt packet to peer
-    if (!session->Encrypt(data, len, out_udp_packet)) {
-        return false;
+    // Encrypt packet to peer if full WireGuard session, else send raw IP
+    if (session->state() == tunnel::SessionState::Established) {
+        if (!session->Encrypt(data, len, out_udp_packet)) {
+            return false;
+        }
+    } else {
+        out_udp_packet.assign(data, data + len);
     }
 
     out_remote_endpoint = session->remote_endpoint();
@@ -412,8 +456,66 @@ void GatewayServer::UdpReceiveLoop() {
                            static_cast<int>(udp_response.size()), 0,
                            reinterpret_cast<sockaddr*>(&sender_addr), sender_len);
                 }
-                if (!tun_packet.empty() && tun_adapter_.IsActive()) {
-                    tun_adapter_.WritePacket(tun_packet.data(), tun_packet.size());
+                if (!tun_packet.empty()) {
+                    if (tun_adapter_.IsActive()) {
+                        tun_adapter_.WritePacket(tun_packet.data(), tun_packet.size());
+                    } else {
+                        // User-space DNS forwarder fallback when Wintun is not active:
+                        // If it's a UDP packet to port 53 (DNS), forward directly to upstream DNS (8.8.8.8)
+                        // and return response to client!
+                        if (tun_packet.size() >= 28 && tun_packet[9] == 17) { // IPv4 + UDP
+                            uint16_t dest_port = (static_cast<uint16_t>(tun_packet[22]) << 8) | tun_packet[23];
+                            if (dest_port == 53) {
+                                size_t dns_len = tun_packet.size() - 28;
+                                sockaddr_in upstream_dns{};
+                                upstream_dns.sin_family = AF_INET;
+                                upstream_dns.sin_port = htons(53);
+                                inet_pton(AF_INET, "8.8.8.8", &upstream_dns.sin_addr);
+
+                                SOCKET forward_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+                                if (forward_sock != INVALID_SOCKET) {
+                                    DWORD timeout = 2000;
+                                    setsockopt(forward_sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+                                    sendto(forward_sock, reinterpret_cast<const char*>(tun_packet.data() + 28),
+                                           static_cast<int>(dns_len), 0,
+                                           reinterpret_cast<sockaddr*>(&upstream_dns), sizeof(upstream_dns));
+
+                                    std::vector<uint8_t> dns_resp_buf(4096);
+                                    int resp_len = recv(forward_sock, reinterpret_cast<char*>(dns_resp_buf.data()), static_cast<int>(dns_resp_buf.size()), 0);
+                                    closesocket(forward_sock);
+
+                                    if (resp_len > 0) {
+                                        std::vector<uint8_t> reply_ip_pkt(28 + resp_len);
+                                        // IPv4 header (20 bytes)
+                                        reply_ip_pkt[0] = 0x45; // Version 4, IHL 5
+                                        reply_ip_pkt[1] = 0x00; // DSCP / ECN
+                                        uint16_t total_len = static_cast<uint16_t>(28 + resp_len);
+                                        reply_ip_pkt[2] = static_cast<uint8_t>(total_len >> 8);
+                                        reply_ip_pkt[3] = static_cast<uint8_t>(total_len & 0xFF);
+                                        reply_ip_pkt[8] = 64;   // TTL
+                                        reply_ip_pkt[9] = 17;   // UDP
+                                        // Source IP: 8.8.8.8
+                                        reply_ip_pkt[12] = 8; reply_ip_pkt[13] = 8; reply_ip_pkt[14] = 8; reply_ip_pkt[15] = 8;
+                                        // Dest IP: client IP from incoming packet (tun_packet[12..15])
+                                        reply_ip_pkt[16] = tun_packet[12]; reply_ip_pkt[17] = tun_packet[13];
+                                        reply_ip_pkt[18] = tun_packet[14]; reply_ip_pkt[19] = tun_packet[15];
+                                        // UDP header (8 bytes)
+                                        reply_ip_pkt[20] = 0x00; reply_ip_pkt[21] = 53; // Source Port: 53
+                                        reply_ip_pkt[22] = tun_packet[20]; reply_ip_pkt[23] = tun_packet[21]; // Dest Port: client src port
+                                        uint16_t udp_len = static_cast<uint16_t>(8 + resp_len);
+                                        reply_ip_pkt[24] = static_cast<uint8_t>(udp_len >> 8);
+                                        reply_ip_pkt[25] = static_cast<uint8_t>(udp_len & 0xFF);
+                                        // Copy DNS payload
+                                        std::memcpy(reply_ip_pkt.data() + 28, dns_resp_buf.data(), resp_len);
+
+                                        sendto(udp_socket_, reinterpret_cast<const char*>(reply_ip_pkt.data()),
+                                               static_cast<int>(reply_ip_pkt.size()), 0,
+                                               reinterpret_cast<sockaddr*>(&sender_addr), sender_len);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         } catch (const std::exception& ex) {

@@ -41,6 +41,7 @@ private:
     std::string HandleRejectDevice(const std::string& body);
     std::string HandlePauseDevice(const std::string& body);
     std::string HandleCreateInvitation(const std::string& body);
+    std::string HandleRegisterDevice(const std::string& body);
     std::string HandleGetDiagnostics();
     std::string HandleToggleGateway();
     std::string HandleUpdateSettings(const std::string& body);

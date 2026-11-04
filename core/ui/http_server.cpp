@@ -344,6 +344,8 @@ std::string HttpServer::HandleRequest(const std::string& method, const std::stri
         json_response = HandleRejectDevice(body);
     } else if (method == "POST" && path == "/api/devices/pause") {
         json_response = HandlePauseDevice(body);
+    } else if (method == "POST" && path == "/api/devices/register") {
+        json_response = HandleRegisterDevice(body);
     } else if (method == "POST" && path == "/api/invitations/create") {
         json_response = HandleCreateInvitation(body);
     } else if (method == "GET" && path == "/api/diagnostics") {
@@ -475,6 +477,68 @@ std::string HttpServer::HandlePauseDevice(const std::string& body) {
         return resp.dump();
     } catch (...) {
         return "{\"error\": \"Invalid request\"}";
+    }
+}
+
+std::string HttpServer::HandleRegisterDevice(const std::string& body) {
+    try {
+        auto parsed = json::parse(body);
+        std::string token = parsed.value("token", "");
+        std::string device_name = parsed.value("device_name", "Android Phone");
+        std::string platform = parsed.value("platform", "android");
+        std::string assigned_ip = parsed.value("assigned_ip", "10.77.0.2");
+
+        int64_t duration_sec = 86400;
+        std::string gw_id = gateway_.config().id;
+
+        // Validate and redeem the token if present
+        if (!token.empty()) {
+            gateway_.invitation_manager().ValidateAndRedeemToken(token, duration_sec, gw_id);
+        }
+
+        int64_t expires = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count() + duration_sec;
+
+        std::string mock_pub = "mobile_client_" + assigned_ip;
+        std::string out_dev_id;
+        std::string out_ip;
+
+        gateway_.device_manager().RegisterDeviceRequest(
+            gateway_.config().id,
+            device_name,
+            platform,
+            mock_pub,
+            expires,
+            out_dev_id,
+            out_ip
+        );
+
+        if (!out_dev_id.empty()) {
+            // Auto-approve newly registered pass device
+            gateway_.device_manager().ApproveDevice(out_dev_id);
+
+            // Register peer in quota manager with generous 10GB limit
+            accounting::PeerAccountingState state{};
+            state.device_id = out_dev_id;
+            state.daily_quota_bytes = 10ULL * 1024 * 1024 * 1024;
+            state.expires_at = expires;
+            gateway_.quota_manager().RegisterPeer(state);
+
+            LOG_INFO << "[HttpServer] Registered and auto-approved guest device: " << device_name
+                     << " (IP: " << out_ip << ", ID: " << out_dev_id << ")";
+
+            json resp;
+            resp["success"] = true;
+            resp["device_id"] = out_dev_id;
+            resp["status"] = "APPROVED";
+            resp["assigned_ip"] = out_ip;
+            return resp.dump();
+        }
+
+        return "{\"error\": \"Could not register device request\"}";
+    } catch (const std::exception& ex) {
+        LOG_WARN << "[HttpServer] Error registering device: " << ex.what();
+        return "{\"error\": \"Failed to register device\"}";
     }
 }
 
