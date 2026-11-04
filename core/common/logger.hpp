@@ -85,8 +85,10 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         if (level >= LogLevel::Warn) {
             std::cerr << log_entry;
+            std::cerr.flush();
         } else {
             std::cout << log_entry;
+            std::cout.flush();
         }
 
         if (file_stream_.is_open()) {

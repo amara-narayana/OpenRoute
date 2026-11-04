@@ -146,6 +146,7 @@ Database::~Database() {
 }
 
 bool Database::Open(const std::string& filepath) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     Close();
 
     int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;
@@ -170,6 +171,7 @@ bool Database::Open(const std::string& filepath) {
 }
 
 void Database::Close() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (db_) {
         sqlite3_close_v2(db_);
         db_ = nullptr;
@@ -177,6 +179,7 @@ void Database::Close() {
 }
 
 bool Database::Execute(std::string_view sql) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!db_) return false;
     char* err_msg = nullptr;
     int rc = sqlite3_exec(db_, sql.data(), nullptr, nullptr, &err_msg);
@@ -190,14 +193,17 @@ bool Database::Execute(std::string_view sql) {
 }
 
 Statement Database::Prepare(std::string_view sql) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return Statement(db_, sql);
 }
 
 Transaction Database::BeginTransaction() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return Transaction(db_);
 }
 
 int Database::GetSchemaVersion() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!db_) return 0;
     try {
         auto stmt = Prepare("SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1;");
@@ -211,6 +217,7 @@ int Database::GetSchemaVersion() {
 }
 
 bool Database::ApplyMigrations() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!db_) return false;
 
     // Base migration table

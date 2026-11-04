@@ -384,30 +384,36 @@ void GatewayServer::UdpReceiveLoop() {
     int sender_len = sizeof(sender_addr);
 
     while (is_running_) {
-        int bytes = recvfrom(udp_socket_, reinterpret_cast<char*>(buffer.data()),
-                             static_cast<int>(buffer.size()), 0,
-                             reinterpret_cast<sockaddr*>(&sender_addr), &sender_len);
-        if (bytes <= 0) {
-            if (!is_running_) break;
-            continue;
-        }
-
-        char ip_str[INET_ADDRSTRLEN] = {0};
-        inet_ntop(AF_INET, &(sender_addr.sin_addr), ip_str, INET_ADDRSTRLEN);
-        std::string endpoint = std::string(ip_str) + ":" + std::to_string(ntohs(sender_addr.sin_port));
-
-        std::vector<uint8_t> udp_response;
-        std::vector<uint8_t> tun_packet;
-
-        if (ProcessInboundUdp(buffer.data(), static_cast<size_t>(bytes), endpoint, udp_response, tun_packet)) {
-            if (!udp_response.empty()) {
-                sendto(udp_socket_, reinterpret_cast<const char*>(udp_response.data()),
-                       static_cast<int>(udp_response.size()), 0,
-                       reinterpret_cast<sockaddr*>(&sender_addr), sender_len);
+        try {
+            int bytes = recvfrom(udp_socket_, reinterpret_cast<char*>(buffer.data()),
+                                 static_cast<int>(buffer.size()), 0,
+                                 reinterpret_cast<sockaddr*>(&sender_addr), &sender_len);
+            if (bytes <= 0) {
+                if (!is_running_) break;
+                continue;
             }
-            if (!tun_packet.empty() && tun_adapter_.IsActive()) {
-                tun_adapter_.WritePacket(tun_packet.data(), tun_packet.size());
+
+            char ip_str[INET_ADDRSTRLEN] = {0};
+            inet_ntop(AF_INET, &(sender_addr.sin_addr), ip_str, INET_ADDRSTRLEN);
+            std::string endpoint = std::string(ip_str) + ":" + std::to_string(ntohs(sender_addr.sin_port));
+
+            std::vector<uint8_t> udp_response;
+            std::vector<uint8_t> tun_packet;
+
+            if (ProcessInboundUdp(buffer.data(), static_cast<size_t>(bytes), endpoint, udp_response, tun_packet)) {
+                if (!udp_response.empty()) {
+                    sendto(udp_socket_, reinterpret_cast<const char*>(udp_response.data()),
+                           static_cast<int>(udp_response.size()), 0,
+                           reinterpret_cast<sockaddr*>(&sender_addr), sender_len);
+                }
+                if (!tun_packet.empty() && tun_adapter_.IsActive()) {
+                    tun_adapter_.WritePacket(tun_packet.data(), tun_packet.size());
+                }
             }
+        } catch (const std::exception& ex) {
+            LOG_ERROR << "[GatewayServer] UdpReceiveLoop error: " << ex.what();
+        } catch (...) {
+            LOG_ERROR << "[GatewayServer] UdpReceiveLoop unknown error";
         }
     }
 #endif
@@ -416,36 +422,42 @@ void GatewayServer::UdpReceiveLoop() {
 void GatewayServer::TunReceiveLoop() {
     std::vector<uint8_t> packet;
     while (is_running_) {
-        if (!tun_adapter_.IsActive()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            continue;
-        }
-
-        if (tun_adapter_.ReadPacket(packet)) {
-            std::vector<uint8_t> udp_pkt;
-            std::string endpoint;
-            if (ProcessInboundTun(packet.data(), packet.size(), udp_pkt, endpoint)) {
-#if defined(_WIN32)
-                if (!endpoint.empty() && udp_socket_ != INVALID_SOCKET) {
-                    auto pos = endpoint.find(':');
-                    if (pos != std::string::npos) {
-                        std::string ip = endpoint.substr(0, pos);
-                        uint16_t port = static_cast<uint16_t>(std::stoi(endpoint.substr(pos + 1)));
-
-                        sockaddr_in dest{};
-                        dest.sin_family = AF_INET;
-                        dest.sin_port = htons(port);
-                        inet_pton(AF_INET, ip.c_str(), &(dest.sin_addr));
-
-                        sendto(udp_socket_, reinterpret_cast<const char*>(udp_pkt.data()),
-                               static_cast<int>(udp_pkt.size()), 0,
-                               reinterpret_cast<sockaddr*>(&dest), sizeof(dest));
-                    }
-                }
-#endif
+        try {
+            if (!tun_adapter_.IsActive()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                continue;
             }
-        } else {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+            if (tun_adapter_.ReadPacket(packet)) {
+                std::vector<uint8_t> udp_pkt;
+                std::string endpoint;
+                if (ProcessInboundTun(packet.data(), packet.size(), udp_pkt, endpoint)) {
+#if defined(_WIN32)
+                    if (!endpoint.empty() && udp_socket_ != INVALID_SOCKET) {
+                        auto pos = endpoint.find(':');
+                        if (pos != std::string::npos) {
+                            std::string ip = endpoint.substr(0, pos);
+                            uint16_t port = static_cast<uint16_t>(std::stoi(endpoint.substr(pos + 1)));
+
+                            sockaddr_in dest{};
+                            dest.sin_family = AF_INET;
+                            dest.sin_port = htons(port);
+                            inet_pton(AF_INET, ip.c_str(), &(dest.sin_addr));
+
+                            sendto(udp_socket_, reinterpret_cast<const char*>(udp_pkt.data()),
+                                   static_cast<int>(udp_pkt.size()), 0,
+                                   reinterpret_cast<sockaddr*>(&dest), sizeof(dest));
+                        }
+                    }
+#endif
+                }
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        } catch (const std::exception& ex) {
+            LOG_ERROR << "[GatewayServer] TunReceiveLoop error: " << ex.what();
+        } catch (...) {
+            LOG_ERROR << "[GatewayServer] TunReceiveLoop unknown error";
         }
     }
 }
@@ -455,7 +467,13 @@ void GatewayServer::HousekeepingLoop() {
         std::this_thread::sleep_for(std::chrono::seconds(10));
         if (!is_running_) break;
 
-        quota_mgr_.PersistToDatabase();
+        try {
+            quota_mgr_.PersistToDatabase();
+        } catch (const std::exception& ex) {
+            LOG_ERROR << "[GatewayServer] Quota persistence error: " << ex.what();
+        } catch (...) {
+            LOG_ERROR << "[GatewayServer] Housekeeping unknown error";
+        }
     }
 }
 

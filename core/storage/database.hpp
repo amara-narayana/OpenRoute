@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -79,9 +80,11 @@ public:
     int GetSchemaVersion();
 
     [[nodiscard]] sqlite3* raw_handle() const { return db_; }
+    [[nodiscard]] std::recursive_mutex& mutex() const { return mutex_; }
 
 private:
     sqlite3* db_ = nullptr;
+    mutable std::recursive_mutex mutex_;
 };
 
 } // namespace openroute::storage

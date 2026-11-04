@@ -146,67 +146,89 @@ void HttpServer::ServerLoop() {
             continue;
         }
 
-        std::thread([this, client_sock]() {
-            HandleClient(client_sock);
-        }).detach();
+        try {
+            std::thread([this, client_sock]() {
+                try {
+                    HandleClient(client_sock);
+                } catch (const std::exception& ex) {
+                    LOG_ERROR << "[HttpServer] Client thread exception: " << ex.what();
+                } catch (...) {
+                    LOG_ERROR << "[HttpServer] Client thread unknown exception";
+                }
+            }).detach();
+        } catch (const std::exception& ex) {
+            LOG_ERROR << "[HttpServer] Failed to spawn thread for client socket: " << ex.what();
+            closesocket(client_sock);
+        }
     }
 }
 
 void HttpServer::HandleClient(SOCKET client_socket) {
-    char buffer[4096];
-    int bytes_read = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
-    if (bytes_read <= 0) {
-        closesocket(client_socket);
-        return;
-    }
-
-    std::string req(buffer, bytes_read);
-    size_t header_end = req.find("\r\n\r\n");
-    while (header_end == std::string::npos) {
-        bytes_read = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
-        if (bytes_read <= 0) break;
-        req.append(buffer, bytes_read);
-        header_end = req.find("\r\n\r\n");
-    }
-
-    std::istringstream stream(req);
-    std::string method, path, protocol;
-    stream >> method >> path >> protocol;
-
-    // Check for Content-Length
-    size_t expected_content_len = 0;
-    size_t cl_pos = req.find("Content-Length:");
-    if (cl_pos == std::string::npos) cl_pos = req.find("content-length:");
-    if (cl_pos != std::string::npos) {
-        size_t line_end = req.find("\r\n", cl_pos);
-        if (line_end != std::string::npos) {
-            std::string val_str = req.substr(cl_pos + 15, line_end - (cl_pos + 15));
-            try {
-                expected_content_len = std::stoul(val_str);
-            } catch (...) {}
+    try {
+        char buffer[4096];
+        int bytes_read = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
+        if (bytes_read <= 0) {
+            closesocket(client_socket);
+            return;
         }
-    }
 
-    std::string body;
-    if (header_end != std::string::npos) {
-        body = req.substr(header_end + 4);
-        while (body.size() < expected_content_len) {
+        std::string req(buffer, bytes_read);
+        size_t header_end = req.find("\r\n\r\n");
+        while (header_end == std::string::npos) {
             bytes_read = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
             if (bytes_read <= 0) break;
-            body.append(buffer, bytes_read);
+            req.append(buffer, bytes_read);
+            header_end = req.find("\r\n\r\n");
         }
-    }
 
-    std::string response = HandleRequest(method, path, body);
-    int total_sent = 0;
-    int to_send = static_cast<int>(response.size());
-    while (total_sent < to_send) {
-        int bytes_sent = send(client_socket, response.data() + total_sent, to_send - total_sent, 0);
-        if (bytes_sent <= 0) break;
-        total_sent += bytes_sent;
+        std::istringstream stream(req);
+        std::string method, path, protocol;
+        if (!(stream >> method >> path >> protocol)) {
+            closesocket(client_socket);
+            return;
+        }
+
+        // Check for Content-Length
+        size_t expected_content_len = 0;
+        size_t cl_pos = req.find("Content-Length:");
+        if (cl_pos == std::string::npos) cl_pos = req.find("content-length:");
+        if (cl_pos != std::string::npos) {
+            size_t line_end = req.find("\r\n", cl_pos);
+            if (line_end != std::string::npos) {
+                std::string val_str = req.substr(cl_pos + 15, line_end - (cl_pos + 15));
+                try {
+                    expected_content_len = std::stoul(val_str);
+                } catch (...) {}
+            }
+        }
+
+        std::string body;
+        if (header_end != std::string::npos) {
+            body = req.substr(header_end + 4);
+            while (body.size() < expected_content_len) {
+                bytes_read = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
+                if (bytes_read <= 0) break;
+                body.append(buffer, bytes_read);
+            }
+        }
+
+        std::string response = HandleRequest(method, path, body);
+        int total_sent = 0;
+        int to_send = static_cast<int>(response.size());
+        while (total_sent < to_send) {
+            int bytes_sent = send(client_socket, response.data() + total_sent, to_send - total_sent, 0);
+            if (bytes_sent <= 0) break;
+            total_sent += bytes_sent;
+        }
+        shutdown(client_socket, SD_SEND);
+        closesocket(client_socket);
+    } catch (const std::exception& ex) {
+        LOG_ERROR << "[HttpServer] Error in HandleClient: " << ex.what();
+        closesocket(client_socket);
+    } catch (...) {
+        LOG_ERROR << "[HttpServer] Unknown error in HandleClient";
+        closesocket(client_socket);
     }
-    shutdown(client_socket, SD_SEND);
-    closesocket(client_socket);
 }
 
 std::string HttpServer::HandleRequest(const std::string& method, const std::string& path, const std::string& body) {

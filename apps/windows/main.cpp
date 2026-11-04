@@ -13,6 +13,7 @@
 #if defined(_WIN32)
 #include <windows.h>
 #include <shellapi.h>
+#include <objbase.h>
 #endif
 
 namespace {
@@ -24,6 +25,23 @@ void SignalHandler(int signal) {
         g_shutdown_requested = true;
     }
 }
+
+#if defined(_WIN32)
+BOOL WINAPI ConsoleCtrlHandler(DWORD ctrl_type) {
+    switch (ctrl_type) {
+        case CTRL_C_EVENT:
+        case CTRL_BREAK_EVENT:
+        case CTRL_CLOSE_EVENT:
+        case CTRL_LOGOFF_EVENT:
+        case CTRL_SHUTDOWN_EVENT:
+            LOG_INFO << "Received console termination event. Shutting down gracefully...";
+            g_shutdown_requested = true;
+            return TRUE;
+        default:
+            return FALSE;
+    }
+}
+#endif
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -32,7 +50,7 @@ int main(int argc, char* argv[]) {
     std::cout << "========================================================\n"
               << "  OpenRoute Gateway v0.1.0\n"
               << "  Tagline: Your internet. Shared on your terms.\n"
-              << "========================================================\n\n";
+              << "========================================================\n\n" << std::flush;
 
     common::Logger::Instance().SetMinLevel(common::LogLevel::Info);
     LOG_INFO << "Initializing OpenRoute Gateway Engine...";
@@ -44,7 +62,7 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         std::string_view arg(argv[i]);
         if (arg == "--version" || arg == "-v") {
-            std::cout << "OpenRoute version 0.1.0 (Windows 11 x86_64)\n";
+            std::cout << "OpenRoute version 0.1.0 (Windows 11 x86_64)\n" << std::flush;
             return 0;
         }
         if (arg == "--help" || arg == "-h") {
@@ -53,7 +71,7 @@ int main(int argc, char* argv[]) {
                       << "  -h, --help          Show help\n"
                       << "  --db <path>         Specify custom database path\n"
                       << "  --port <port>       HTTP dashboard port (default: 8765)\n"
-                      << "  --no-browser        Do not automatically open dashboard in browser\n";
+                      << "  --no-browser        Do not automatically open dashboard in browser\n" << std::flush;
             return 0;
         }
         if (arg == "--no-browser") {
@@ -67,70 +85,82 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Register signal handlers
+    // Register signal and console handlers
     std::signal(SIGINT, SignalHandler);
     std::signal(SIGTERM, SignalHandler);
-
-    // 1. Initialize SQLite Database
-    storage::Database db;
-    if (!db.Open(db_path)) {
-        LOG_FATAL << "Failed to open local database: " << db_path;
-        return 1;
-    }
-
-    if (!db.ApplyMigrations()) {
-        LOG_FATAL << "Failed to apply database migrations.";
-        return 1;
-    }
-    LOG_INFO << "Database migrations applied successfully. Schema version: " << db.GetSchemaVersion();
-
-    // 2. Initialize Gateway Server
-    gateway::GatewayConfig gw_config;
-    gw_config.id = "gw_default";
-    gw_config.name = "OpenRoute Windows Gateway";
-    gw_config.listen_port = 51820;
-    gw_config.tunnel_subnet = "10.77.0.0/24";
-    gw_config.tunnel_ip = "10.77.0.1";
-    gw_config.egress_interface = "Wi-Fi";
-
-    gateway::GatewayServer gateway(db, gw_config);
-    if (!gateway.Initialize()) {
-        LOG_WARN << "Gateway running in userspace simulation mode (administrative NetNat requires elevated terminal).";
-    }
-    gateway.Start();
-
-    // 3. Initialize & Start HTTP Dashboard Server
-    ui::HttpServer http_server(gateway, http_port);
-    if (!http_server.Start()) {
-        LOG_ERROR << "Failed to start HTTP dashboard server on port " << http_port;
-        return 1;
-    }
-
-    std::string dashboard_url = "http://127.0.0.1:" + std::to_string(http_port);
-    LOG_INFO << "OpenRoute Dashboard ready at: " << dashboard_url;
-
 #if defined(_WIN32)
-    if (!no_browser) {
-        LOG_INFO << "Launching control dashboard in default browser...";
-        ShellExecuteA(NULL, "open", dashboard_url.c_str(), NULL, NULL, SW_SHOWNORMAL);
-    }
+    SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE);
 #endif
 
-    std::cout << "\n[OK] OpenRoute Gateway is running.\n"
-              << "     Dashboard URL: " << dashboard_url << "\n"
-              << "     Press Ctrl+C to stop.\n\n";
+    try {
+        // 1. Initialize SQLite Database
+        storage::Database db;
+        if (!db.Open(db_path)) {
+            LOG_FATAL << "Failed to open local database: " << db_path;
+            return 1;
+        }
 
-    // Keep running until shutdown signal
-    while (!g_shutdown_requested) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (!db.ApplyMigrations()) {
+            LOG_FATAL << "Failed to apply database migrations.";
+            return 1;
+        }
+        LOG_INFO << "Database migrations applied successfully. Schema version: " << db.GetSchemaVersion();
+
+        // 2. Initialize Gateway Server
+        gateway::GatewayConfig gw_config;
+        gw_config.id = "gw_default";
+        gw_config.name = "OpenRoute Windows Gateway";
+        gw_config.listen_port = 51820;
+        gw_config.tunnel_subnet = "10.77.0.0/24";
+        gw_config.tunnel_ip = "10.77.0.1";
+        gw_config.egress_interface = "Wi-Fi";
+
+        gateway::GatewayServer gateway(db, gw_config);
+        if (!gateway.Initialize()) {
+            LOG_WARN << "Gateway running in userspace simulation mode (administrative NetNat requires elevated terminal).";
+        }
+        gateway.Start();
+
+        // 3. Initialize & Start HTTP Dashboard Server
+        ui::HttpServer http_server(gateway, http_port);
+        if (!http_server.Start()) {
+            LOG_ERROR << "Failed to start HTTP dashboard server on port " << http_port;
+            return 1;
+        }
+
+        std::string dashboard_url = "http://127.0.0.1:" + std::to_string(http_port);
+        LOG_INFO << "OpenRoute Dashboard ready at: " << dashboard_url;
+
+#if defined(_WIN32)
+        if (!no_browser) {
+            LOG_INFO << "Launching control dashboard in default browser...";
+            CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+            ShellExecuteA(NULL, "open", dashboard_url.c_str(), NULL, NULL, SW_SHOWNORMAL);
+        }
+#endif
+
+        std::cout << "\n[OK] OpenRoute Gateway is running.\n"
+                  << "     Dashboard URL: " << dashboard_url << "\n"
+                  << "     Press Ctrl+C to stop.\n\n" << std::flush;
+
+        // Keep running until shutdown signal
+        while (!g_shutdown_requested) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+
+        LOG_INFO << "Stopping HTTP Dashboard Server...";
+        http_server.Stop();
+
+        LOG_INFO << "Stopping Gateway Engine...";
+        gateway.Stop();
+
+        LOG_INFO << "OpenRoute Gateway terminated cleanly.";
+        return 0;
+    } catch (const std::exception& ex) {
+        LOG_FATAL << "Fatal exception in OpenRoute Gateway: " << ex.what();
+        return 1;
+    } catch (...) {
+        LOG_FATAL << "Fatal unknown exception in OpenRoute Gateway.";
+        return 1;
     }
-
-    LOG_INFO << "Stopping HTTP Dashboard Server...";
-    http_server.Stop();
-
-    LOG_INFO << "Stopping Gateway Engine...";
-    gateway.Stop();
-
-    LOG_INFO << "OpenRoute Gateway terminated cleanly.";
-    return 0;
 }

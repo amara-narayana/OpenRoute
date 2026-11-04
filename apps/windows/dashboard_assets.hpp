@@ -388,6 +388,10 @@ inline constexpr std::string_view DASHBOARD_SCRIPT = R"rawhtml(
       if (!text || text === 'undefined') return;
       const container = document.getElementById('qrCodeContainer');
       if (!container) return;
+      if (typeof QRCode === 'undefined') {
+        setTimeout(() => renderQrCode(text), 150);
+        return;
+      }
       container.innerHTML = '';
       try {
         qrCodeInstance = new QRCode(container, {
