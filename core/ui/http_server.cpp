@@ -1,5 +1,6 @@
 #include "core/ui/http_server.hpp"
 #include "core/common/logger.hpp"
+#include "core/networking/nat_probe.hpp"
 #include "apps/windows/dashboard_assets.hpp"
 #include "apps/windows/join_assets.hpp"
 
@@ -112,6 +113,22 @@ bool HttpServer::Start() {
 
     is_running_ = true;
     server_thread_ = std::thread(&HttpServer::ServerLoop, this);
+
+    // Launch background STUN prober to discover public endpoint
+    stun_thread_ = std::thread([this]() {
+        try {
+            networking::NatProbe probe;
+            auto res = probe.PerformFullProbe();
+            if (!res.public_ip.empty()) {
+                std::lock_guard<std::mutex> lock(config_mutex_);
+                public_ip_ = res.public_ip;
+                public_port_ = res.public_port > 0 ? res.public_port : gateway_.config().listen_port;
+                nat_type_desc_ = networking::NatTypeToString(res.type);
+                LOG_INFO << "[HttpServer] STUN discovered public endpoint: " << public_ip_ << ":" << public_port_ << " (" << nat_type_desc_ << ")";
+            }
+        } catch (...) {}
+    });
+
     LOG_INFO << "[HttpServer] Dashboard HTTP server listening at http://127.0.0.1:" << port_;
     return true;
 }
@@ -127,6 +144,10 @@ void HttpServer::Stop() {
 
     if (server_thread_.joinable()) {
         server_thread_.join();
+    }
+
+    if (stun_thread_.joinable()) {
+        stun_thread_.join();
     }
 
 #if defined(_WIN32)
@@ -323,6 +344,8 @@ std::string HttpServer::HandleRequest(const std::string& method, const std::stri
         json_response = HandleGetDiagnostics();
     } else if (method == "POST" && path == "/api/gateway/toggle") {
         json_response = HandleToggleGateway();
+    } else if (method == "POST" && path == "/api/settings/network") {
+        json_response = HandleUpdateSettings(body);
     } else {
         std::string not_found = "{\"error\": \"Not Found\"}";
         std::ostringstream ss;
@@ -354,6 +377,8 @@ std::string HttpServer::HandleGetStatus() {
         else if (d.status == device::DeviceStatus::PendingApproval) pending_cnt++;
     }
 
+    std::lock_guard<std::mutex> lock(config_mutex_);
+
     json j;
     j["gateway_id"] = gateway_.config().id;
     j["gateway_name"] = gateway_.config().name;
@@ -363,7 +388,12 @@ std::string HttpServer::HandleGetStatus() {
     j["egress_interface"] = gateway_.config().egress_interface;
     j["active_devices_count"] = active_cnt;
     j["pending_devices_count"] = pending_cnt;
-    j["nat_type"] = "Full Cone NAT (Direct P2P Ready)";
+    j["local_ip"] = GetLocalLanIp();
+    j["public_ip"] = public_ip_.empty() ? "Probing STUN..." : public_ip_;
+    j["public_port"] = public_port_;
+    j["public_host"] = public_host_;
+    j["public_url"] = public_url_;
+    j["nat_type"] = nat_type_desc_;
 
     return j.dump();
 }
@@ -446,6 +476,9 @@ std::string HttpServer::HandleCreateInvitation(const std::string& body) {
     std::string pass_type = "TEMPORARY_24H";
     int duration_hours = 24;
     int max_uses = 1;
+    std::string scope = "remote";
+    std::string custom_host = "";
+    std::string custom_url = "";
 
     if (!body.empty()) {
         try {
@@ -453,6 +486,9 @@ std::string HttpServer::HandleCreateInvitation(const std::string& body) {
             pass_type = parsed.value("pass_type", "TEMPORARY_24H");
             duration_hours = parsed.value("pass_duration_hours", 24);
             max_uses = parsed.value("single_use", true) ? 1 : 10;
+            scope = parsed.value("network_scope", "remote");
+            custom_host = parsed.value("custom_host", "");
+            custom_url = parsed.value("custom_url", "");
         } catch (const std::exception& ex) {
             LOG_WARN << "[HttpServer] JSON parse warning: " << ex.what();
         }
@@ -479,23 +515,88 @@ std::string HttpServer::HandleCreateInvitation(const std::string& body) {
         }
 
         std::string lan_ip = GetLocalLanIp();
-        std::string join_url = "http://" + lan_ip + ":" + std::to_string(port_) + "/join?token=" + UrlEncode(payload->token)
+        std::string effective_host = lan_ip;
+        uint16_t effective_port = gateway_.config().listen_port;
+
+        {
+            std::lock_guard<std::mutex> lock(config_mutex_);
+            if (scope == "remote") {
+                if (!custom_host.empty()) {
+                    effective_host = custom_host;
+                } else if (!public_host_.empty()) {
+                    effective_host = public_host_;
+                } else if (!public_ip_.empty()) {
+                    effective_host = public_ip_;
+                }
+                effective_port = public_port_;
+            }
+        }
+
+        std::string base_join_url;
+        {
+            std::lock_guard<std::mutex> lock(config_mutex_);
+            if (!custom_url.empty()) {
+                base_join_url = custom_url;
+            } else if (!public_url_.empty() && scope == "remote") {
+                base_join_url = public_url_;
+            } else {
+                base_join_url = "http://" + effective_host + ":" + std::to_string(port_);
+            }
+        }
+
+        while (!base_join_url.empty() && base_join_url.back() == '/') {
+            base_join_url.pop_back();
+        }
+
+        std::string join_url = base_join_url + "/join?token=" + UrlEncode(payload->token)
                              + "&gw=" + UrlEncode(gateway_.config().id)
                              + "&name=" + UrlEncode(gateway_.config().name)
                              + "&pub=" + UrlEncode(pub_b64)
-                             + "&port=" + std::to_string(gateway_.config().listen_port)
+                             + "&host=" + UrlEncode(effective_host)
+                             + "&port=" + std::to_string(effective_port)
                              + "&pass=" + UrlEncode(payload->pass_type)
                              + "&dur=" + std::to_string(duration_sec);
 
+        std::string deep_invite_url = "openroute://invite?token=" + UrlEncode(payload->token)
+                                    + "&gw=" + UrlEncode(gateway_.config().id)
+                                    + "&name=" + UrlEncode(gateway_.config().name)
+                                    + "&pub=" + UrlEncode(pub_b64)
+                                    + "&host=" + UrlEncode(effective_host)
+                                    + "&port=" + std::to_string(effective_port)
+                                    + "&pass=" + UrlEncode(payload->pass_type)
+                                    + "&dur=" + std::to_string(duration_sec);
+
         json resp;
         resp["token"] = payload->token;
-        resp["invitation_url"] = payload->invitation_url;
+        resp["invitation_url"] = deep_invite_url;
         resp["join_url"] = join_url;
+        resp["effective_host"] = effective_host;
+        resp["effective_port"] = effective_port;
+        resp["network_scope"] = scope;
         resp["pass_type"] = payload->pass_type;
         resp["expires_at"] = payload->expires_at;
         return resp.dump();
     } catch (...) {
         return "{\"error\": \"Invalid request\"}";
+    }
+}
+
+std::string HttpServer::HandleUpdateSettings(const std::string& body) {
+    try {
+        auto parsed = json::parse(body);
+        std::lock_guard<std::mutex> lock(config_mutex_);
+        if (parsed.contains("public_host")) public_host_ = parsed["public_host"].get<std::string>();
+        if (parsed.contains("public_url")) public_url_ = parsed["public_url"].get<std::string>();
+        if (parsed.contains("public_port")) public_port_ = parsed["public_port"].get<uint16_t>();
+
+        json resp;
+        resp["success"] = true;
+        resp["public_host"] = public_host_;
+        resp["public_url"] = public_url_;
+        resp["public_port"] = public_port_;
+        return resp.dump();
+    } catch (...) {
+        return "{\"error\": \"Failed to update settings\"}";
     }
 }
 

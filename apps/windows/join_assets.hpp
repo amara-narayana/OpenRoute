@@ -65,6 +65,7 @@ inline constexpr std::string_view JOIN_HTML_HEAD = R"rawhtml(<!DOCTYPE html>
       </div>
       <div class="pass-details">
         <div>Gateway: <strong id="gwName">OpenRoute Gateway</strong></div>
+        <div>Endpoint: <strong id="gwHost">Connecting...</strong></div>
         <div>Protection: <strong>Private LAN Isolation Active</strong></div>
       </div>
     </div>
@@ -106,6 +107,7 @@ inline constexpr std::string_view JOIN_HTML_HEAD = R"rawhtml(<!DOCTYPE html>
     let gw = urlParams.get('gw') || 'gw_default';
     let name = urlParams.get('name') || 'OpenRoute Gateway';
     let pub = urlParams.get('pub') || '';
+    let host = urlParams.get('host') || window.location.hostname;
     let port = urlParams.get('port') || '51820';
     let pass = urlParams.get('pass') || 'TEMPORARY_24H';
     let dur = urlParams.get('dur') || '86400';
@@ -114,12 +116,13 @@ inline constexpr std::string_view JOIN_HTML_HEAD = R"rawhtml(<!DOCTYPE html>
     if (pub) pub = pub.replace(/ /g, '+');
 
     if (name) document.getElementById('gwName').innerText = name;
+    if (host) document.getElementById('gwHost').innerText = host + ':' + port;
     if (pass === 'TEMPORARY_2H') document.getElementById('passName').innerText = '2-Hour Quick Guest Pass';
     else if (pass === 'TEMPORARY_24H') document.getElementById('passName').innerText = '24-Hour Day Pass';
     else if (pass === 'TEMPORARY_7D') document.getElementById('passName').innerText = '7-Day Weekly Pass';
 
     // Construct the direct deep link for when the app is installed
-    const deepLink = `openroute://invite?token=${encodeURIComponent(token)}&gw=${encodeURIComponent(gw)}&name=${encodeURIComponent(name)}&pub=${encodeURIComponent(pub)}&port=${encodeURIComponent(port)}&pass=${encodeURIComponent(pass)}&dur=${encodeURIComponent(dur)}`;
+    const deepLink = `openroute://invite?token=${encodeURIComponent(token)}&gw=${encodeURIComponent(gw)}&name=${encodeURIComponent(name)}&pub=${encodeURIComponent(pub)}&host=${encodeURIComponent(host)}&port=${encodeURIComponent(port)}&pass=${encodeURIComponent(pass)}&dur=${encodeURIComponent(dur)}`;
     document.getElementById('openAppBtn').href = deepLink;
 
     // Save token to localStorage so if app opens in webview, token is preserved

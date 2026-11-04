@@ -43,12 +43,21 @@ private:
     std::string HandleCreateInvitation(const std::string& body);
     std::string HandleGetDiagnostics();
     std::string HandleToggleGateway();
+    std::string HandleUpdateSettings(const std::string& body);
 
     gateway::GatewayServer& gateway_;
     uint16_t port_;
     std::atomic<bool> is_running_{false};
     SOCKET listen_socket_{INVALID_SOCKET};
     std::thread server_thread_;
+    std::thread stun_thread_;
+
+    mutable std::mutex config_mutex_;
+    std::string public_ip_;
+    uint16_t public_port_{51820};
+    std::string public_host_;
+    std::string public_url_;
+    std::string nat_type_desc_{"Discovering via STUN..."};
 };
 
 } // namespace openroute::ui

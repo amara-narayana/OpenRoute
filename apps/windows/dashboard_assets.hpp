@@ -151,7 +151,7 @@ inline constexpr std::string_view DASHBOARD_HEAD = R"rawhtml(<!DOCTYPE html>
 <body>
 )rawhtml";
 
-inline constexpr std::string_view DASHBOARD_BODY = R"rawhtml(
+inline constexpr std::string_view DASHBOARD_BODY_PART1 = R"rawhtml(
   <header>
     <div class="brand">
       <div class="brand-logo">OR</div>
@@ -224,11 +224,38 @@ inline constexpr std::string_view DASHBOARD_BODY = R"rawhtml(
           <div id="authorizedDevicesList" class="device-list"></div>
         </div>
       </section>
+)rawhtml";
 
+inline constexpr std::string_view DASHBOARD_BODY_PART2 = R"rawhtml(
       <section id="tab-invitations" class="view-section">
         <div class="section-header"><div><h2>Create Temporary Internet Pass</h2><p>Generate a secure QR invitation for Android or Windows guests.</p></div></div>
         <div class="qr-container">
           <div class="card qr-form">
+            <div class="form-group"><label>Network Scope (Where is the guest connecting from?)</label>
+              <div class="preset-pills" id="scopePills">
+                <button type="button" class="preset-pill active" onclick="selectScope('remote', this)">🌐 Remote Internet (Anywhere)</button>
+                <button type="button" class="preset-pill" onclick="selectScope('local', this)">🏠 Local Wi-Fi (Home Only)</button>
+              </div>
+              <p id="scopeHint" style="font-size:12px; color:var(--text-muted); margin-top:4px;">
+                Remote scope routes traffic via your Public IP / Cloudflare Tunnel so guests can connect from mobile data or outside networks.
+              </p>
+            </div>
+
+            <div id="remoteEndpointBox" style="background:#F8FAFC; border:1px solid var(--border); border-radius:8px; padding:12px; display:flex; flex-direction:column; gap:8px;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:11px; font-weight:700; color:#475569; text-transform:uppercase;">Public STUN Endpoint:</span>
+                <span id="detectedPublicIpBadge" class="pill pill-green">Detecting...</span>
+              </div>
+              <div style="font-size:13px; color:#1E293B;">
+                WireGuard Host: <strong id="detectedPublicEndpointText">Probing STUN...</strong>
+              </div>
+              <div style="border-top:1px solid var(--border); padding-top:8px; margin-top:2px;">
+                <label style="font-size:11px; font-weight:600; color:#64748B;">CUSTOM CLOUDFLARE TUNNEL URL OR DDNS DOMAIN (OPTIONAL):</label>
+                <input type="text" id="customTunnelUrl" placeholder="e.g. https://my-gateway.trycloudflare.com" class="form-control" style="font-size:12px; margin-top:4px; background:white;">
+                <span style="font-size:11px; color:#64748B;">If your ISP uses CGNAT, enter a Cloudflare Tunnel URL so remote URLs work anywhere.</span>
+              </div>
+            </div>
+
             <div class="form-group"><label>Pass Duration</label>
               <div class="preset-pills">
                 <button type="button" class="preset-pill" onclick="selectDuration(2, 'TEMPORARY_2H', this)">2 Hours</button>
@@ -260,10 +287,14 @@ inline constexpr std::string_view DASHBOARD_BODY = R"rawhtml(
           </div>
           <div class="qr-preview">
             <h4 style="font-size:15px; font-weight:700;">Scan with Phone Camera</h4>
-            <p style="font-size:12px; color:var(--text-muted); margin-top:4px;">Auto-downloads OpenRoute app on Android</p>
+            <p style="font-size:12px; color:var(--text-muted); margin-top:4px;">Opens landing page & auto-downloads app</p>
             <div id="qrCodeContainer" style="display:flex; justify-content:center; align-items:center; background:#FFFFFF; padding:10px; border-radius:12px; border:1px solid #E2E8F0; box-shadow:0 1px 3px rgba(0,0,0,0.06); width:200px; height:200px; margin:14px auto;"></div>
-            <span id="qrPassLabel" class="pill pill-green">24 Hours Pass</span>
-            <div style="margin-top:14px; width:100%;">
+            <div style="display:flex; gap:6px; justify-content:center; margin-bottom:4px;">
+              <span id="qrPassLabel" class="pill pill-green">24 Hours Pass</span>
+              <span id="qrScopeLabel" class="pill pill-green">Remote Access</span>
+            </div>
+            <div style="margin-top:12px; width:100%;">
+              <label style="font-size:11px; font-weight:600; color:var(--text-muted); display:block; text-align:left; margin-bottom:4px;">INVITATION URL (MOBILE BROWSER):</label>
               <input type="text" id="inviteUrlField" readonly class="form-control" style="font-size:11px; text-align:center; background:#F8FAFC;" value="openroute://invite?token=...">
               <button class="btn btn-outline" style="width:100%; margin-top:8px; justify-content:center;" onclick="copyInviteLink()">Copy Link</button>
             </div>
@@ -285,21 +316,61 @@ inline constexpr std::string_view DASHBOARD_BODY = R"rawhtml(
             <div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border);">
               <span style="color:var(--text-muted);">Detected NAT Type:</span><strong id="diagNatType">Full Cone NAT (Direct P2P Supported)</strong>
             </div>
+            <div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border);">
+              <span style="color:var(--text-muted);">Local LAN IP:</span><strong id="diagLanIp">192.168.0.239</strong>
+            </div>
+            <div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border);">
+              <span style="color:var(--text-muted);">Public STUN IP:</span><strong id="diagPublicIp">103.217.214.146</strong>
+            </div>
             <div style="display:flex; justify-content:space-between; padding:8px 0;">
-              <span style="color:var(--text-muted);">Direct P2P Viability:</span><span class="pill pill-green">Direct UDP Ready</span>
+              <span style="color:var(--text-muted);">Direct P2P Viability:</span><span id="diagP2pPill" class="pill pill-green">UDP Ready</span>
             </div>
           </div>
         </div>
       </section>
 
       <section id="tab-settings" class="view-section">
-        <div class="section-header"><div><h2>Gateway Settings & Security Rules</h2><p>Control network interfaces and private LAN boundaries.</p></div></div>
+        <div class="section-header"><div><h2>Gateway Settings & Security Rules</h2><p>Control network interfaces, remote access, and private LAN boundaries.</p></div></div>
         <div class="card">
           <div class="card-title">Security & Isolation</div>
           <div class="switch-row">
-            <div><strong style="font-size:14px;">Private LAN Isolation (RFC 1918)</strong><p style="font-size:12px; color:var(--text-muted); margin-top:2px;">Block guests from 192.168.0.0/16, 10.0.0.0/8.</p></div>
+            <div><strong style="font-size:14px;">Private LAN Isolation (RFC 1918)</strong><p style="font-size:12px; color:var(--text-muted); margin-top:2px;">Block guests from accessing 192.168.0.0/16, 10.0.0.0/8 host LAN services.</p></div>
             <label class="switch"><input type="checkbox" id="lanIsoSwitch" checked><span class="slider"></span></label>
           </div>
+        </div>
+        <div class="card">
+          <div class="card-title"><span>Remote Internet Sharing & NAT Traversal</span><span id="settingsNatBadge" class="pill pill-green">STUN Active</span></div>
+          <p style="font-size:13px; color:var(--text-muted); margin-bottom:16px;">
+            Configure how devices outside your home network connect to your gateway.
+          </p>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
+            <div class="form-group">
+              <label>Auto-Discovered Public IP (via STUN)</label>
+              <input type="text" id="cfgPublicIp" readonly class="form-control" style="background:#F8FAFC;" value="Probing STUN...">
+            </div>
+            <div class="form-group">
+              <label>NAT Traversal Topology</label>
+              <input type="text" id="cfgNatType" readonly class="form-control" style="background:#F8FAFC;" value="Analyzing...">
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
+            <div class="form-group">
+              <label>Custom DDNS / Public Hostname (WireGuard)</label>
+              <input type="text" id="cfgPublicHost" placeholder="e.g. gateway.myfamily.org or 103.x.x.x" class="form-control">
+              <span style="font-size:11px; color:var(--text-muted);">Overrides public IP in WireGuard endpoints.</span>
+            </div>
+            <div class="form-group">
+              <label>Public Web Tunnel URL (e.g. Cloudflare / Ngrok)</label>
+              <input type="text" id="cfgPublicUrl" placeholder="https://example.trycloudflare.com" class="form-control">
+              <span style="font-size:11px; color:var(--text-muted);">Use for zero-port-forwarding CGNAT bypass for QR invitations.</span>
+            </div>
+          </div>
+          <div style="background:#EFF6FF; border:1px solid #BFDBFE; border-radius:8px; padding:12px; margin-bottom:16px; font-size:12px; color:#1E40AF; line-height:1.5;">
+            💡 <strong>Remote Internet Sharing Guide:</strong><br>
+            • <strong>Port Forwarding:</strong> If your home router has a public IPv4, forward UDP port <strong>51820</strong> and TCP port <strong>8765</strong> to this PC (<code>192.168.0.239</code>).<br>
+            • <strong>CGNAT Bypass:</strong> If behind Symmetric NAT or mobile hotspot, run <code>cloudflared tunnel --url http://localhost:8765</code> and paste the free <code>trycloudflare.com</code> URL above.
+          </div>
+          <button class="btn btn-primary" onclick="saveNetworkSettings()">Save Remote Settings</button>
         </div>
         <div class="card">
           <div class="card-title">Network Configuration</div>
@@ -329,7 +400,10 @@ inline constexpr std::string_view DASHBOARD_SCRIPT = R"rawhtml(
   <script>
     let currentDurationHours = 24;
     let currentPassType = 'TEMPORARY_24H';
+    let currentScope = 'remote';
     let isGatewayRunning = true;
+    let detectedPublicIp = '';
+    let detectedPublicPort = 51820;
     const canvas = document.getElementById('trafficCanvas');
     const ctx = canvas.getContext('2d');
     let history = Array(40).fill(0);
@@ -378,9 +452,31 @@ inline constexpr std::string_view DASHBOARD_SCRIPT = R"rawhtml(
 
     function selectDuration(hours, passType, el) {
       currentDurationHours = hours; currentPassType = passType;
-      document.querySelectorAll('.preset-pills .preset-pill').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.preset-pills .preset-pill').forEach(b => {
+        if (b.parentElement && b.parentElement.id !== 'scopePills') b.classList.remove('active');
+      });
       el.classList.add('active');
       document.getElementById('qrPassLabel').innerText = el.innerText + ' Pass';
+    }
+
+    function selectScope(scope, el) {
+      currentScope = scope;
+      const pills = document.querySelectorAll('#scopePills .preset-pill');
+      pills.forEach(p => p.classList.remove('active'));
+      el.classList.add('active');
+      const box = document.getElementById('remoteEndpointBox');
+      const hint = document.getElementById('scopeHint');
+      const scopeBadge = document.getElementById('qrScopeLabel');
+      if (scope === 'remote') {
+        if (box) box.style.display = 'flex';
+        if (hint) hint.innerText = 'Remote scope routes traffic via your Public IP / Cloudflare Tunnel so guests can connect from mobile data or outside networks.';
+        if (scopeBadge) { scopeBadge.innerText = 'Remote Access'; scopeBadge.className = 'pill pill-green'; }
+      } else {
+        if (box) box.style.display = 'none';
+        if (hint) hint.innerText = 'Local mode restricts invitations to devices connected to your same home Wi-Fi network (192.168.0.x).';
+        if (scopeBadge) { scopeBadge.innerText = 'Local Wi-Fi'; scopeBadge.className = 'pill pill-amber'; }
+      }
+      generateInvitation();
     }
 
     let qrCodeInstance = null;
@@ -411,9 +507,11 @@ inline constexpr std::string_view DASHBOARD_SCRIPT = R"rawhtml(
       const rateEl = document.getElementById('inviteRateLimit');
       const quotaEl = document.getElementById('inviteQuota');
       const singleUseEl = document.getElementById('singleUseCheck');
+      const tunnelUrlEl = document.getElementById('customTunnelUrl');
       const rate = rateEl ? rateEl.value : '30';
       const quota = quotaEl ? quotaEl.value : '5';
       const singleUse = singleUseEl ? singleUseEl.checked : true;
+      const customUrl = tunnelUrlEl ? tunnelUrlEl.value.trim() : '';
 
       let displayUrl = '';
       try {
@@ -425,7 +523,9 @@ inline constexpr std::string_view DASHBOARD_SCRIPT = R"rawhtml(
             pass_type: currentPassType,
             rate_limit_mbps: parseInt(rate) || 30,
             quota_gb: parseInt(quota) || 5,
-            single_use: singleUse
+            single_use: singleUse,
+            network_scope: currentScope,
+            custom_url: customUrl
           })
         });
         if (res.ok) {
@@ -440,12 +540,15 @@ inline constexpr std::string_view DASHBOARD_SCRIPT = R"rawhtml(
 
       // Robust fallback if backend is paused or returned an error
       if (!displayUrl) {
-        const fallbackHost = window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1'
-          ? window.location.hostname
-          : '192.168.0.239';
+        let fallbackHost = '192.168.0.239';
+        if (currentScope === 'remote' && detectedPublicIp && detectedPublicIp !== 'Probing STUN...') {
+          fallbackHost = detectedPublicIp;
+        } else if (window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+          fallbackHost = window.location.hostname;
+        }
         const port = window.location.port || '8765';
         const mockToken = 'tok_' + Math.random().toString(36).substring(2, 12);
-        displayUrl = `${window.location.protocol}//${fallbackHost}:${port}/join?token=${encodeURIComponent(mockToken)}&gw=gw_default&name=OpenRoute%20Windows%20Gateway&pub=&port=51820&pass=${currentPassType}&dur=${currentDurationHours * 3600}`;
+        displayUrl = `${window.location.protocol}//${fallbackHost}:${port}/join?token=${encodeURIComponent(mockToken)}&gw=gw_default&name=OpenRoute%20Windows%20Gateway&pub=&host=${encodeURIComponent(fallbackHost)}&port=51820&pass=${currentPassType}&dur=${currentDurationHours * 3600}`;
       }
 
       const input = document.getElementById('inviteUrlField');
@@ -456,14 +559,14 @@ inline constexpr std::string_view DASHBOARD_SCRIPT = R"rawhtml(
     function copyInviteLink() {
       const input = document.getElementById('inviteUrlField');
       input.select(); navigator.clipboard.writeText(input.value);
-      alert('Invitation link copied to clipboard!');
+      alert('Invitation link copied to clipboard! Share this URL with your guest to connect from anywhere.');
     }
 
     async function fetchStatus() {
       try {
         const res = await fetch('/api/status'); const d = await res.json();
         document.getElementById('statActiveDevices').innerText = d.active_devices_count || 0;
-        document.getElementById('egressAdapterName').innerText = `${d.egress_interface} (192.168.0.239)`;
+        document.getElementById('egressAdapterName').innerText = `${d.egress_interface} (${d.local_ip || '192.168.0.239'})`;
         if (d.pending_devices_count > 0) {
           document.getElementById('pendingAlert').style.display = 'flex';
           document.getElementById('pendingCountBadge').innerText = `${d.pending_devices_count} Pending`;
@@ -473,6 +576,38 @@ inline constexpr std::string_view DASHBOARD_SCRIPT = R"rawhtml(
         const badge = document.getElementById('gatewayStatusBadge'), text = document.getElementById('gatewayStatusText'), btn = document.getElementById('toggleGatewayBtn');
         if (d.is_running) { badge.className = 'status-badge'; text.innerText = 'GATEWAY ONLINE'; btn.innerText = 'Stop Gateway'; }
         else { badge.className = 'status-badge offline'; text.innerText = 'GATEWAY PAUSED'; btn.innerText = 'Start Gateway'; }
+
+        // Populate Public STUN detection
+        if (d.public_ip) {
+          detectedPublicIp = d.public_ip;
+          detectedPublicPort = d.public_port || 51820;
+          const hostDisplay = d.public_host || d.public_ip;
+          const endpointText = document.getElementById('detectedPublicEndpointText');
+          if (endpointText) endpointText.innerText = `${hostDisplay}:${detectedPublicPort}`;
+          const badgeEl = document.getElementById('detectedPublicIpBadge');
+          if (badgeEl) badgeEl.innerText = d.public_ip !== 'Probing STUN...' ? 'Online' : 'Detecting...';
+
+          const cfgIp = document.getElementById('cfgPublicIp');
+          if (cfgIp) cfgIp.value = d.public_ip;
+          const cfgNat = document.getElementById('cfgNatType');
+          if (cfgNat) cfgNat.value = d.nat_type || 'Analyzing...';
+          const diagNat = document.getElementById('diagNatType');
+          if (diagNat && d.nat_type) diagNat.innerText = d.nat_type;
+          const diagPub = document.getElementById('diagPublicIp');
+          if (diagPub && d.public_ip) diagPub.innerText = `${d.public_ip}:${detectedPublicPort}`;
+          const diagLan = document.getElementById('diagLanIp');
+          if (diagLan && d.local_ip) diagLan.innerText = d.local_ip;
+          if (document.getElementById('cfgPublicHost') && !document.getElementById('cfgPublicHost').value && d.public_host) {
+            document.getElementById('cfgPublicHost').value = d.public_host;
+          }
+          if (document.getElementById('cfgPublicUrl') && !document.getElementById('cfgPublicUrl').value && d.public_url) {
+            document.getElementById('cfgPublicUrl').value = d.public_url;
+            if (document.getElementById('customTunnelUrl') && !document.getElementById('customTunnelUrl').value) {
+              document.getElementById('customTunnelUrl').value = d.public_url;
+            }
+          }
+        }
+
         const currentDown = (Math.random() * 8 + (d.active_devices_count > 0 ? 12 : 0)).toFixed(1);
         const currentUp = (Math.random() * 2 + (d.active_devices_count > 0 ? 3 : 0)).toFixed(1);
         document.getElementById('statDownSpeed').innerText = `${currentDown} Mbps`;
@@ -480,6 +615,27 @@ inline constexpr std::string_view DASHBOARD_SCRIPT = R"rawhtml(
         history.shift(); history.push(parseFloat(currentDown)); drawChart();
       } catch (e) {
         history.shift(); history.push(Math.random() * 8); drawChart();
+      }
+    }
+
+    async function saveNetworkSettings() {
+      const publicHost = document.getElementById('cfgPublicHost').value.trim();
+      const publicUrl = document.getElementById('cfgPublicUrl').value.trim();
+      try {
+        const res = await fetch('/api/settings/network', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ public_host: publicHost, public_url: publicUrl })
+        });
+        if (res.ok) {
+          alert('Remote settings saved! Invitations will now use this remote endpoint.');
+          fetchStatus();
+          generateInvitation();
+        } else {
+          alert('Failed to save network settings.');
+        }
+      } catch (err) {
+        alert('Error saving network settings: ' + err.message);
       }
     }
 
@@ -522,9 +678,10 @@ inline constexpr std::string_view DASHBOARD_SCRIPT = R"rawhtml(
 
 inline std::string GetDashboardHtml() {
     std::string html;
-    html.reserve(DASHBOARD_HEAD.size() + DASHBOARD_BODY.size() + QRCODE_LIB_PART1.size() + QRCODE_LIB_PART2.size() + DASHBOARD_SCRIPT.size());
+    html.reserve(DASHBOARD_HEAD.size() + DASHBOARD_BODY_PART1.size() + DASHBOARD_BODY_PART2.size() + QRCODE_LIB_PART1.size() + QRCODE_LIB_PART2.size() + DASHBOARD_SCRIPT.size());
     html.append(DASHBOARD_HEAD);
-    html.append(DASHBOARD_BODY);
+    html.append(DASHBOARD_BODY_PART1);
+    html.append(DASHBOARD_BODY_PART2);
     html.append(QRCODE_LIB_PART1);
     html.append(QRCODE_LIB_PART2);
     html.append(DASHBOARD_SCRIPT);

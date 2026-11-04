@@ -170,3 +170,44 @@ TEST(HttpServerTest, CreateInvitationAndListDevices) {
 
     server.Stop();
 }
+
+TEST(HttpServerTest, RemoteInvitationAndNetworkSettings) {
+    Database db;
+    ASSERT_TRUE(db.Open(":memory:"));
+    ASSERT_TRUE(db.ApplyMigrations());
+
+    GatewayConfig cfg;
+    cfg.id = "gw_remote_test";
+    cfg.name = "Remote Family Gateway";
+    GatewayServer gw(db, cfg);
+    ASSERT_TRUE(gw.Initialize());
+
+    uint16_t test_port = 8794;
+    HttpServer server(gw, test_port);
+    ASSERT_TRUE(server.Start());
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // Configure remote endpoint (DDNS hostname and Cloudflare tunnel URL)
+    std::string cfg_json = "{\"public_host\": \"remote.myfamily.org\", \"public_url\": \"https://remote-gw.trycloudflare.com\"}";
+    std::string cfg_resp = SimpleHttpPost(test_port, "/api/settings/network", cfg_json);
+    EXPECT_NE(cfg_resp.find("HTTP/1.1 200 OK"), std::string::npos);
+    EXPECT_NE(cfg_resp.find("\"success\":true"), std::string::npos);
+    EXPECT_NE(cfg_resp.find("\"public_host\":\"remote.myfamily.org\""), std::string::npos);
+
+    // Create remote invitation
+    std::string invite_req = "{\"network_scope\": \"remote\", \"pass_type\": \"TEMPORARY_24H\", \"pass_duration_hours\": 24}";
+    std::string invite_resp = SimpleHttpPost(test_port, "/api/invitations/create", invite_req);
+    EXPECT_NE(invite_resp.find("HTTP/1.1 200 OK"), std::string::npos);
+    EXPECT_NE(invite_resp.find("https://remote-gw.trycloudflare.com/join"), std::string::npos);
+    EXPECT_NE(invite_resp.find("host=remote.myfamily.org"), std::string::npos);
+    EXPECT_NE(invite_resp.find("openroute://invite"), std::string::npos);
+
+    // Verify /join endpoint serves landing page
+    std::string join_page = SimpleHttpGet(test_port, "/join?token=test_tok&host=remote.myfamily.org");
+    EXPECT_NE(join_page.find("HTTP/1.1 200 OK"), std::string::npos);
+    EXPECT_NE(join_page.find("OpenRoute Gateway"), std::string::npos);
+    EXPECT_NE(join_page.find("Download OpenRoute App"), std::string::npos);
+
+    server.Stop();
+}
