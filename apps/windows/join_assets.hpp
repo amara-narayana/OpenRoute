@@ -102,13 +102,16 @@ inline constexpr std::string_view JOIN_HTML_HEAD = R"rawhtml(<!DOCTYPE html>
   <script>
     // Extract parameters from URL
     const urlParams = new URLSearchParams(window.location.search);
-    const token = urlParams.get('token') || '';
-    const gw = urlParams.get('gw') || 'gw_default';
-    const name = urlParams.get('name') || 'OpenRoute Gateway';
-    const pub = urlParams.get('pub') || '';
-    const port = urlParams.get('port') || '51820';
-    const pass = urlParams.get('pass') || 'TEMPORARY_24H';
-    const dur = urlParams.get('dur') || '86400';
+    let token = urlParams.get('token') || '';
+    let gw = urlParams.get('gw') || 'gw_default';
+    let name = urlParams.get('name') || 'OpenRoute Gateway';
+    let pub = urlParams.get('pub') || '';
+    let port = urlParams.get('port') || '51820';
+    let pass = urlParams.get('pass') || 'TEMPORARY_24H';
+    let dur = urlParams.get('dur') || '86400';
+
+    if (token) token = token.replace(/ /g, '+');
+    if (pub) pub = pub.replace(/ /g, '+');
 
     if (name) document.getElementById('gwName').innerText = name;
     if (pass === 'TEMPORARY_2H') document.getElementById('passName').innerText = '2-Hour Quick Guest Pass';
@@ -125,15 +128,25 @@ inline constexpr std::string_view JOIN_HTML_HEAD = R"rawhtml(<!DOCTYPE html>
       localStorage.setItem('openroute_token', token);
     } catch(e) {}
 
-    // Automatically trigger APK download after 600ms
-    setTimeout(() => {
-      const link = document.createElement('a');
-      link.href = '/download/openroute.apk';
-      link.download = 'openroute.apk';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    }, 600);
+    // Automatically trigger APK download via hidden link and iframe
+    function triggerDownload() {
+      try {
+        const link = document.createElement('a');
+        link.href = '/download/openroute.apk';
+        link.download = 'openroute.apk';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } catch(e) {}
+
+      try {
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        iframe.src = '/download/openroute.apk';
+        document.body.appendChild(iframe);
+      } catch(e) {}
+    }
+    setTimeout(triggerDownload, 300);
   </script>
 </body>
 </html>

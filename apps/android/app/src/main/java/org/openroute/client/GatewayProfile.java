@@ -33,6 +33,7 @@ public class GatewayProfile implements Serializable {
 
         String token = uri.getQueryParameter("token");
         if (token == null || token.isEmpty()) return null;
+        token = token.replace(' ', '+');
 
         String gw = uri.getQueryParameter("gw");
         if (gw == null) gw = "gw_default";
@@ -42,6 +43,7 @@ public class GatewayProfile implements Serializable {
 
         String pub = uri.getQueryParameter("pub");
         if (pub == null) pub = "";
+        pub = pub.replace(' ', '+');
 
         int port = 51820;
         String portStr = uri.getQueryParameter("port");

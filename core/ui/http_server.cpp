@@ -14,6 +14,21 @@ using json = nlohmann::json;
 
 namespace openroute::ui {
 
+static std::string UrlEncode(const std::string& value) {
+    std::ostringstream escaped;
+    escaped.fill('0');
+    escaped << std::hex;
+
+    for (char c : value) {
+        if (isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' || c == '.' || c == '~') {
+            escaped << c;
+        } else {
+            escaped << '%' << std::uppercase << std::setw(2) << int(static_cast<unsigned char>(c));
+        }
+    }
+    return escaped.str();
+}
+
 static std::string GetLocalLanIp() {
     SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock == INVALID_SOCKET) {
@@ -442,12 +457,12 @@ std::string HttpServer::HandleCreateInvitation(const std::string& body) {
         }
 
         std::string lan_ip = GetLocalLanIp();
-        std::string join_url = "http://" + lan_ip + ":" + std::to_string(port_) + "/join?token=" + payload->token
-                             + "&gw=" + gateway_.config().id
-                             + "&name=" + gateway_.config().name
-                             + "&pub=" + pub_b64
+        std::string join_url = "http://" + lan_ip + ":" + std::to_string(port_) + "/join?token=" + UrlEncode(payload->token)
+                             + "&gw=" + UrlEncode(gateway_.config().id)
+                             + "&name=" + UrlEncode(gateway_.config().name)
+                             + "&pub=" + UrlEncode(pub_b64)
                              + "&port=" + std::to_string(gateway_.config().listen_port)
-                             + "&pass=" + payload->pass_type
+                             + "&pass=" + UrlEncode(payload->pass_type)
                              + "&dur=" + std::to_string(duration_sec);
 
         json resp;
