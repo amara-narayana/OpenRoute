@@ -39,5 +39,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Single-Page Application (SPA) dashboard in `apps/windows/dashboard_assets.hpp` adhering to the Blue & White design palette (`#2563EB`, `#FFFFFF`, `#F8FAFC`, `#0F172A`).
   - Embedded high-performance HTTP & REST API server in `core/ui/http_server.hpp|.cpp` listening on `127.0.0.1:8765`.
   - Real-time network throughput canvas graph, interactive bandwidth sliders, offline SVG QR code generator, and one-click device approval queue.
+- **Smart QR Onboarding & Auto-App Download (Phase 10)**:
+  - Seamless camera QR flow: standard camera or Google Lens scan points to `http://<lan-ip>:8765/join?token=...`.
+  - Auto-download landing page in `apps/windows/join_assets.hpp` automatically initiates APK download after 600ms, provides fallback download buttons, and enables direct deep linking (`openroute://invite?...`) for pre-installed clients.
+  - Multi-packet binary streaming server with chunked TCP writes, `SD_SEND` connection shutdown, and `HEAD` request support.
+  - Pre-compiled standalone signed Android client APK (`apps/android/openroute.apk`, 34KB) packaged with v1/v2/v3 signatures, zero external dependencies, and native Android `VpnService` support.
 - **Automated Test Suite**:
   - 31 automated test cases passing with 100% success rate across crypto, database, tunnel handshake, gateway pipeline, client engine, NAT probing, relay framing, and HTTP REST server.

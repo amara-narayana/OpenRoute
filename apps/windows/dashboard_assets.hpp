@@ -259,8 +259,8 @@ inline constexpr std::string_view DASHBOARD_BODY = R"rawhtml(
             <button class="btn btn-primary" style="margin-top:12px; height:42px; justify-content:center;" onclick="generateInvitation()">Generate Invitation QR</button>
           </div>
           <div class="qr-preview">
-            <h4 style="font-size:15px; font-weight:700;">Scan with OpenRoute App</h4>
-            <p style="font-size:12px; color:var(--text-muted); margin-top:4px;">Open Android app & point camera</p>
+            <h4 style="font-size:15px; font-weight:700;">Scan with Phone Camera</h4>
+            <p style="font-size:12px; color:var(--text-muted); margin-top:4px;">Auto-downloads OpenRoute app on Android</p>
             <canvas id="qrCanvas" width="180" height="180"></canvas>
             <span id="qrPassLabel" class="pill pill-green">24 Hours Pass</span>
             <div style="margin-top:14px; width:100%;">
@@ -393,10 +393,11 @@ inline constexpr std::string_view DASHBOARD_SCRIPT = R"rawhtml(
           body: JSON.stringify({ pass_duration_hours: currentDurationHours, pass_type: currentPassType, rate_limit_mbps: parseInt(rate), quota_gb: parseInt(quota), single_use: singleUse })
         });
         const data = await res.json();
-        document.getElementById('inviteUrlField').value = data.invitation_url;
-        renderQrCode(data.invitation_url);
+        const displayUrl = data.join_url || data.invitation_url;
+        document.getElementById('inviteUrlField').value = displayUrl;
+        renderQrCode(displayUrl);
       } catch (e) {
-        const mockUrl = `openroute://gateway?token=mock_${Date.now()}&pass=${currentPassType}&port=51820`;
+        const mockUrl = `${window.location.origin}/join?token=mock_${Date.now()}&pass=${currentPassType}&port=51820`;
         document.getElementById('inviteUrlField').value = mockUrl;
         renderQrCode(mockUrl);
       }

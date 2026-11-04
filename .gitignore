@@ -32,6 +32,7 @@ apps/android/.gradle/
 apps/android/build/
 apps/android/app/build/
 *.apk
+!apps/android/openroute.apk
 *.aab
 local.properties
 .cxx/
@@ -40,6 +41,7 @@ local.properties
 *.db
 *.db-journal
 *.db-wal
+*.db-shm
 *.log
 *.pfx
 *.cer

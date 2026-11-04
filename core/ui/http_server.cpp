@@ -1,16 +1,48 @@
 #include "core/ui/http_server.hpp"
 #include "core/common/logger.hpp"
 #include "apps/windows/dashboard_assets.hpp"
+#include "apps/windows/join_assets.hpp"
 
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <fstream>
 #include <sstream>
 #include <vector>
 
 using json = nlohmann::json;
 
 namespace openroute::ui {
+
+static std::string GetLocalLanIp() {
+    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock == INVALID_SOCKET) {
+        return "192.168.0.239";
+    }
+    sockaddr_in loopback{};
+    loopback.sin_family = AF_INET;
+    inet_pton(AF_INET, "8.8.8.8", &loopback.sin_addr);
+    loopback.sin_port = htons(53);
+    if (connect(sock, reinterpret_cast<sockaddr*>(&loopback), sizeof(loopback)) == SOCKET_ERROR) {
+        closesocket(sock);
+        return "192.168.0.239";
+    }
+    sockaddr_in local_addr{};
+    int name_len = sizeof(local_addr);
+    if (getsockname(sock, reinterpret_cast<sockaddr*>(&local_addr), &name_len) == SOCKET_ERROR) {
+        closesocket(sock);
+        return "192.168.0.239";
+    }
+    closesocket(sock);
+    char ip_str[INET_ADDRSTRLEN];
+    if (inet_ntop(AF_INET, &local_addr.sin_addr, ip_str, sizeof(ip_str))) {
+        std::string ip(ip_str);
+        if (ip != "0.0.0.0" && ip != "127.0.0.1") {
+            return ip;
+        }
+    }
+    return "192.168.0.239";
+}
 
 HttpServer::HttpServer(gateway::GatewayServer& gateway, uint16_t port)
     : gateway_(gateway), port_(port) {
@@ -42,7 +74,7 @@ bool HttpServer::Start() {
 
     sockaddr_in server_addr{};
     server_addr.sin_family = AF_INET;
-    inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     server_addr.sin_port = htons(port_);
 
     if (bind(listen_socket_, reinterpret_cast<sockaddr*>(&server_addr), sizeof(server_addr)) == SOCKET_ERROR) {
@@ -151,7 +183,14 @@ void HttpServer::HandleClient(SOCKET client_socket) {
     }
 
     std::string response = HandleRequest(method, path, body);
-    send(client_socket, response.c_str(), static_cast<int>(response.size()), 0);
+    int total_sent = 0;
+    int to_send = static_cast<int>(response.size());
+    while (total_sent < to_send) {
+        int bytes_sent = send(client_socket, response.data() + total_sent, to_send - total_sent, 0);
+        if (bytes_sent <= 0) break;
+        total_sent += bytes_sent;
+    }
+    shutdown(client_socket, SD_SEND);
     closesocket(client_socket);
 }
 
@@ -164,14 +203,69 @@ std::string HttpServer::HandleRequest(const std::string& method, const std::stri
                "Connection: close\r\n\r\n";
     }
 
-    if (method == "GET" && (path == "/" || path == "/index.html")) {
+    if ((method == "GET" || method == "HEAD") && (path == "/" || path == "/index.html")) {
         std::string html = GetDashboardHtml();
         std::ostringstream ss;
         ss << "HTTP/1.1 200 OK\r\n"
            << "Content-Type: text/html; charset=utf-8\r\n"
            << "Content-Length: " << html.size() << "\r\n"
-           << "Connection: close\r\n\r\n"
-           << html;
+           << "Connection: close\r\n\r\n";
+        if (method == "GET") {
+            ss << html;
+        }
+        return ss.str();
+    }
+
+    if ((method == "GET" || method == "HEAD") && (path == "/join" || path.rfind("/join?", 0) == 0)) {
+        std::string html = GetJoinHtml();
+        std::ostringstream ss;
+        ss << "HTTP/1.1 200 OK\r\n"
+           << "Content-Type: text/html; charset=utf-8\r\n"
+           << "Access-Control-Allow-Origin: *\r\n"
+           << "Content-Length: " << html.size() << "\r\n"
+           << "Connection: close\r\n\r\n";
+        if (method == "GET") {
+            ss << html;
+        }
+        return ss.str();
+    }
+
+    if ((method == "GET" || method == "HEAD") && (path == "/download/openroute.apk" || path == "/download/app")) {
+        std::vector<std::string> search_paths = {
+            "apps/android/openroute.apk",
+            "build/apk/openroute.apk",
+            "apps/android/app/build/outputs/apk/debug/app-debug.apk"
+        };
+        for (const auto& apk_path : search_paths) {
+            std::ifstream file(apk_path, std::ios::binary | std::ios::ate);
+            if (file.is_open()) {
+                std::streamsize size = file.tellg();
+                file.seekg(0, std::ios::beg);
+                std::ostringstream ss;
+                ss << "HTTP/1.1 200 OK\r\n"
+                   << "Content-Type: application/vnd.android.package-archive\r\n"
+                   << "Content-Disposition: attachment; filename=\"openroute.apk\"\r\n"
+                   << "Access-Control-Allow-Origin: *\r\n"
+                   << "Content-Length: " << size << "\r\n"
+                   << "Connection: close\r\n\r\n";
+                if (method == "HEAD") {
+                    return ss.str();
+                }
+                std::vector<char> buffer(static_cast<size_t>(size));
+                if (file.read(buffer.data(), size)) {
+                    std::string header = ss.str();
+                    std::string response;
+                    response.reserve(header.size() + static_cast<size_t>(size));
+                    response.append(header);
+                    response.append(buffer.data(), static_cast<size_t>(size));
+                    return response;
+                }
+            }
+        }
+        std::string not_found = "{\"error\": \"APK not found on server\"}";
+        std::ostringstream ss;
+        ss << "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: "
+           << not_found.size() << "\r\nConnection: close\r\n\r\n" << not_found;
         return ss.str();
     }
 
@@ -347,9 +441,19 @@ std::string HttpServer::HandleCreateInvitation(const std::string& body) {
             return "{\"error\": \"Failed to generate invitation\"}";
         }
 
+        std::string lan_ip = GetLocalLanIp();
+        std::string join_url = "http://" + lan_ip + ":" + std::to_string(port_) + "/join?token=" + payload->token
+                             + "&gw=" + gateway_.config().id
+                             + "&name=" + gateway_.config().name
+                             + "&pub=" + pub_b64
+                             + "&port=" + std::to_string(gateway_.config().listen_port)
+                             + "&pass=" + payload->pass_type
+                             + "&dur=" + std::to_string(duration_sec);
+
         json resp;
         resp["token"] = payload->token;
         resp["invitation_url"] = payload->invitation_url;
+        resp["join_url"] = join_url;
         resp["pass_type"] = payload->pass_type;
         resp["expires_at"] = payload->expires_at;
         return resp.dump();
